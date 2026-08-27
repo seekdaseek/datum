@@ -345,6 +345,78 @@ docker run -d --name datum-proof --memory=2g --memory-swap=2g --cpus=4 \
 
 `GET /` and `GET /health` return 200. The cap is explicit rather than default — the image is distroless and takes what it is given otherwise. Memory under real proving load is **UNMEASURED**.
 
+## The frontend
+
+**Live page: read-only, no wallet, no proving.** A judge opens a URL and sees a live attestation with zero setup — no extension to install, no keys, no sync to sit through.
+
+```bash
+npm run build:web     # -> frontend-dist/, static output
+npm run dev           # local dev server
+```
+
+### Why read-only is a design decision, not a shortcut
+
+The measurement made the argument. Wallet sync on a public network is the dominant cost of every write path:
+
+| | Wallet sync to usable state |
+|---|---|
+| Local `undeployed` chain | **~20 seconds** |
+| Public `preprod` (2.29M blocks) | **10+ minutes**, sustained ~100% CPU |
+
+A wallet-gated page spends that budget before it renders anything. It loses the reader at the door. So the write path — proving, DUST, deploy, attest — stays in the CLI where it is already proven, and the page does the one thing a reader needs: read the attestation and let them check it.
+
+Three consequences worth stating plainly:
+
+- **The 10 MB prover key never reaches the browser.** Proving happens in the CLI against a local proof server, so `attest.prover` is never downloaded by a reader. That is a consequence of the architecture, not a limitation of it.
+- **No key material exists in the client at all.** No wallet connect, no seed, no signing. There is nothing in the page for a malicious extension or a hostile network to take.
+- **The page cannot lie about private data**, because it never has any. It renders public ledger state and values recomputed from that state.
+
+### What it shows
+
+Everything on screen is read from chain or derived from values on chain:
+
+- the marked-versus-realisable gap at any exit size, computed from the **published venue reserves**
+- the on-chain verdict, COVERED or NOT COVERED
+- `requiredRatio` beside the verdict, badged **SUB-COLLATERALISED** when below `RATIO_SCALE`
+- the venue array actually used — venue id, reserve X, reserve Y, block height, per slot
+- `venuesHash`, with a recompute-and-compare indicator
+- `attestedAt`, `bookCommitment`, the attest transaction hash and its block height
+
+Position sizes, debt and claimed proceeds are **not shown and not implied**. They are not in public state, and the page says so where a reader would otherwise assume the comparison is the book's.
+
+### One honest caveat about the headline comparison
+
+The marked-versus-realisable figures are computed for a **hypothetical exit size against the published reserves**, not for the attested book. They cannot be the book's: position size `q` is a private witness, so neither the marked value `q × Y/X` nor the realisable value `Y·q/(X+q)` is derivable from public state by anyone, including this page.
+
+Showing the book's own numbers would require either publishing `q` — which defeats the contract — or inventing them, which would be fabricated data on a page whose entire claim is verifiability. So the page shows the mechanism using the real published depth, labels the exit size explicitly, and states in the layout that the book's actual size is private. At 50% of pool reserves the curve happens to reproduce the headline case exactly: 25,000,000 marked against 16,666,666 realisable, a 33.3% overstatement.
+
+### The Verify button
+
+One control that re-runs verification client-side: refetch the contract state from the indexer, recompute `venuesHash` over the published venue array using the contract's own `venueDigest` pure circuit, compare, and report. It is the product's claim made interactive — a reader checks it rather than trusting the page.
+
+### Network-agnostic
+
+The page and the CLI read the **same** `scripts/networks.mjs`. Retargeting is one key:
+
+```js
+export const DEFAULT_NETWORK = 'undeployed';   // -> 'preprod' | 'preview'
+```
+
+Verified by doing it, not assumed: flipping that string to `preprod` and rebuilding produced a page targeting preprod with no other change. `?network=<id>` overrides at runtime for side-by-side checks. A network whose `contract` is still `null` renders a precise, actionable message rather than a spinner.
+
+### Bundle
+
+| Asset | Raw | Gzip |
+|---|---|---|
+| `midnight_onchain_runtime_wasm_bg.wasm` | 1,398 kB | 412 kB |
+| app JS (2 chunks) | 79 kB | 22 kB |
+| CSS | 5 kB | 1.7 kB |
+| **Total** | **~1.48 MB** | **~436 kB** |
+
+The first build pulled **10 MB** of additional WASM because `indexerPublicDataProvider` drags in `ledger-v8`, Apollo and `graphql-ws` for transaction, zswap and subscription features a read-only page never uses. Replacing it with one GraphQL query plus the runtime's own `ContractState.deserialize` cut the module graph from 1,235 modules to 33 and removed that 10 MB entirely.
+
+Dependencies added for the whole frontend: **`vite`** and **`vite-plugin-wasm`**, both dev-only. No framework.
+
 ## Scale conventions
 
 Two scales, both fixed, both checked by the tests.

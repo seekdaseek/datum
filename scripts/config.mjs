@@ -13,47 +13,8 @@
 //
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 
-export const NETWORKS = {
-  // Local docker stack from github.com/midnightntwrk/midnight-local-dev.
-  // Genesis wallet is pre-funded and pre-registered for DUST.
-  undeployed: {
-    id: 'undeployed',
-    label: 'local (undeployed)',
-    node: 'http://localhost:9944',
-    indexerHttp: 'http://localhost:8088/api/v4/graphql',
-    indexerWs: 'ws://localhost:8088/api/v4/graphql/ws',
-    proofServer: 'http://localhost:6300',
-    addressPrefix: 'mn_addr_undeployed',
-    faucet: null, // genesis wallet funds directly; no faucet
-    explorer: null,
-  },
-
-  // Public test network. Ledger 8.
-  preview: {
-    id: 'preview',
-    label: 'Preview',
-    node: 'https://rpc.preview.midnight.network',
-    indexerHttp: 'https://indexer.preview.midnight.network/api/v4/graphql',
-    indexerWs: 'wss://indexer.preview.midnight.network/api/v4/graphql/ws',
-    proofServer: 'http://localhost:6300', // always local: it handles private data
-    addressPrefix: 'mn_addr_preview',
-    faucet: 'https://midnight-tmnight-preview.nethermind.dev/',
-    explorer: 'https://preview.midnightexplorer.com/',
-  },
-
-  // Public test network closest to mainnet. Ledger 8.
-  preprod: {
-    id: 'preprod',
-    label: 'Preprod',
-    node: 'https://rpc.preprod.midnight.network',
-    indexerHttp: 'https://indexer.preprod.midnight.network/api/v4/graphql',
-    indexerWs: 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws',
-    proofServer: 'http://localhost:6300',
-    addressPrefix: 'mn_addr_preprod',
-    faucet: 'https://midnight-tmnight-preprod.nethermind.dev/',
-    explorer: 'https://preprod.midnightexplorer.com/',
-  },
-};
+export { NETWORKS } from './networks.mjs';
+import { NETWORKS } from './networks.mjs';
 
 export const DEFAULT_NETWORK = 'undeployed';
 
