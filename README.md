@@ -61,13 +61,15 @@ Measured on the build machine. These are the versions the contract is known to c
 | Component | Version |
 |---|---|
 | `compact` devtools | 0.5.2 |
-| compiler | 0.34.0 |
-| language | 0.26.0 |
-| ledger | `ledger-9.1.0.0-rc.3` |
-| runtime (`@midnight-ntwrk/compact-runtime`) | 0.19.0 |
+| compiler | 0.31.1 |
+| language | 0.23.0 |
+| ledger | `ledger-8.0.2` |
+| runtime (`@midnight-ntwrk/compact-runtime`) | 0.16.0 |
 | node / npm | v24.16.0 / 11.13.0 |
 
-Note that the Compact reference docs still show `pragma language_version 0.16;` in the tutorial. The literal that compiles under language 0.26.0 is `pragma language_version 0.26;`. Where the docs and the compiler disagree, the compiler is right.
+This targets **ledger 8**, which is what the public Preview network runs. The contract was originally written against ledger 9 (toolchain 0.34.0, language 0.26.0, runtime 0.19.0) and migrated; [Ledger 8 and ledger 9](#ledger-8-and-ledger-9) records why, and the `ledger-9` branch preserves that build.
+
+Note that the Compact reference docs still show `pragma language_version 0.16;` in the tutorial. The literal that compiles under language 0.23.0 is `pragma language_version 0.23;`. Where the docs and the compiler disagree, the compiler is right.
 
 ## Build
 
@@ -81,13 +83,94 @@ compact compile --skip-zk contract/src/hello.compact build/hello
 
 `contract/src/hello.compact` is a permanent toolchain smoke test, not part of the attestation logic. It exists so that a failure to compile can always be localised to either the toolchain or the contract, never ambiguously both.
 
+## Ledger 8 and ledger 9
+
+This contract was written, tested and proved on **ledger 9** first, then migrated to **ledger 8**. That was a deliberate reversal and the evidence is worth keeping.
+
+### What was found
+
+Preview runs ledger 8. Read off the live chain, not from a table:
+
+```bash
+curl -s -X POST https://rpc.preview.midnight.network \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"system_version","params":[]}'
+# {"jsonrpc":"2.0","id":1,"result":"1.0.1-5edf8ddd"}
+```
+
+Node `1.0.1` matches the Preview row of the compatibility matrix exactly, so the matrix is current rather than stale. The dependency graph confirms the split from the other side:
+
+| | ledger 8 line | ledger 9 line |
+|---|---|---|
+| Midnight.js | `midnight-js-protocol@4.1.1` | `@5.0.0-beta.7` |
+| Ledger | `ledger-v8@8.1.0` | `ledger-v9@1.0.0-rc.3` |
+| On-chain runtime | `onchain-runtime-v3@3.0.0` | `onchain-runtime-v4@4.0.0-rc.3` |
+| Compact runtime | `0.16.0` | `0.19.0-rc.0` |
+| Proof server image | `8.1.0` | `9.0.0-rc.7` |
+
+**No Midnight.js version bridges them**, because they are different chains. Every ledger-9 component is still pre-release. The Compact 0.34.0 release notes say it plainly: *"Ledger version 9 will be, but is not yet, deployed."*
+
+Being ahead of the deployed network is not an advantage. A contract nobody can call is not deployed software.
+
+### What the migration cost
+
+The contract source changed by **one character**:
+
+```diff
+-pragma language_version 0.26;
++pragma language_version 0.23;
+```
+
+Nothing else. Not one line of circuit logic, not one type width, not one assert.
+
+A compatibility probe under an isolated 0.31.1 toolchain checked each construct the contract depends on before any migration began:
+
+| Construct | Result |
+|---|---|
+| `Uint<136>` accumulators | works — max width is 248 on both, so the overflow budget carries over unchanged |
+| `pure` modifier | works — `venueDigest` still lands in `PureCircuits` |
+| Witness-disclosure analysis | **present and identical**, with the same path-tracing diagnostics |
+| `Vector<8, VenueSlot>` ledger field | works |
+| `persistentHash` / `persistentCommit` | works |
+
+The disclosure analysis mattering most: it is not a ledger-9 feature, and privacy enforcement survives the migration intact.
+
+### Digests are unchanged across the two ledgers
+
+Checked before migrating, because a changed digest would have staled every recorded hash. `persistentHash` and `persistentCommit` produce **byte-identical** output on runtime 0.16.0 and 0.19.0:
+
+```
+persistentHash   Bytes<32>(0x01*32)    72cd6e8422c407fb6d098690f1130b7ded7ec2f7f5e1d30bd9d521f015363793
+persistentHash   Uint<64>(12345)       e1543551249113046932741cc28f36b4bbcc542233eb5094874072d3167f160a
+persistentHash   Vector<8,Uint<64>>    5131651e4f3093ef86a9ef5eb6aefc9ca332c4f2d96f9dc5022e9543931749b9
+persistentCommit Bytes<32>             c57d4f59c961b13e406cd991b0f342ec79e571dc2c1415ff72c6550645a3b198
+persistentCommit Vector<8,Uint<64>>    9798322cb37852fd5ee8b57e10cca435981d8903f57bec1feba4e99750b749ff
+```
+
+End to end through both generated contracts, on the same fixture, the same holds:
+
+```
+bookCommitment  1543fcb5bc18069ab4d0715dda68dfe09702360353fc4a87d32104ad29a90c74
+venuesHash      6eb5156b0ddece7294f2edd1306ab8dcc54ecf7cc61cf010fa347026cc5f0dc5
+```
+
+And the proof artefacts themselves are byte-identical across the two ledgers — `keys/attest.prover`, `keys/attest.verifier`, `zkir/attest.zkir` and `zkir/attest.bzkir` all compare equal. Only the generated JavaScript differs, and only in that ledger 8's circuit calls are synchronous where ledger 9's return promises. **The zero-knowledge circuit is the same circuit.**
+
+### What is preserved
+
+The `ledger-9` branch holds the ledger-9 build exactly as it stood: toolchain 0.34.0, language 0.26.0, `ledger-9.1.0.0-rc.3`, runtime 0.19.0, its own proving measurements and its `contract-manifest.json` with the key hashes inside it.
+
+```bash
+git checkout ledger-9
+```
+
+Same keys, same hashes — see above.
+
 ## Deployment
 
-**Status: BLOCKED on a network version boundary. Not deployed.** No contract address, no transaction hash. The block is upstream of anything in this repo and upstream of funding.
+**Status: not yet deployed.** The contract now targets the network that exists; deployment is the next step.
 
 ### Preview endpoints
-
-From the [Environment reference](https://docs.midnight.network/guides/networks-and-environments), verified live:
 
 | Service | Endpoint |
 |---|---|
@@ -99,84 +182,44 @@ From the [Environment reference](https://docs.midnight.network/guides/networks-a
 | Proof server | `http://127.0.0.1:6300` (always local) |
 | Faucet | <https://midnight-tmnight-preview.nethermind.dev/> |
 
-Both are up. `system_chain` returns `Midnight Preview`; the indexer answers at block 606908.
+Both are live: `system_chain` returns `Midnight Preview`, and the indexer answers.
 
-### The blocker
+| Deliverable | Value |
+|---|---|
+| Contract address | *pending deployment* |
+| Transaction hash | *pending deployment* |
+| Indexer verification query | *pending deployment* |
 
-This contract is compiled for **ledger 9**. Preview runs **ledger 8**.
-
-| | This repo | Preview (live) |
-|---|---|---|
-| Compact toolchain | 0.34.0 | 0.31.1 |
-| Compact runtime | 0.19.0 | 0.16.0 |
-| On-chain runtime | `onchain-runtime-v4` 4.0.0-rc.3 | `onchain-runtime-v3` 3.0.0 |
-| Ledger | `ledger-9.1.0.0-rc.3` | `ledger-v8` 8.1.0 |
-| Midnight.js | would need 5.0.0-beta.7 | 4.1.1 |
-| Proof server | would need 9.0.0-rc.7 | 8.1.0 |
-
-Node version was read from the live chain, not from a table:
-
-```bash
-curl -s -X POST https://rpc.preview.midnight.network \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"system_version","params":[]}'
-# {"jsonrpc":"2.0","id":1,"result":"1.0.1-5edf8ddd"}
-```
-
-That matches the Preview row of the [compatibility matrix](https://docs.midnight.network/relnotes/support-matrix) exactly, so the matrix is current rather than stale. The dependency pins confirm the split from the other direction — `@midnight-ntwrk/midnight-js-protocol@4.1.1` depends on `ledger-v8@8.1.0` and `onchain-runtime-v3@3.0.0`, while `@5.0.0-beta.7` depends on `ledger-v9@1.0.0-rc.3` and `onchain-runtime-v4@4.0.0-rc.3`. There is no version of Midnight.js that bridges them, because they are different chains.
-
-The Compact 0.34.0 release notes say it plainly: *"Ledger version 9 will be, but is not yet, deployed."*
-
-Every ledger-9 component is still a release candidate: Midnight.js is at `5.0.0-beta.7`, the proof server at `9.0.0-rc.7`. There is no stable ledger-9 stack to deploy against and no ledger-9 public network to deploy to.
-
-### Provider architecture, for when the network moves
+### Provider architecture
 
 Determined from package sources, not inference.
 
 **The proof server consumes the prover key.** `httpClientProofProvider` calls `zkConfigProvider.get(circuitId)` to read the key material locally, then POSTs it to the proof server's `/prove` endpoint as `application/octet-stream`. So the 10 MB `attest.prover` is read by the client and shipped over HTTP on every proof. On a Node deploy that is a local file read plus a loopback POST. In a browser it would be a 10 MB download first — the reason a frontend should serve artifacts from the same origin and cache them.
 
-**`httpClientProofProvider`, not `dappConnectorProofProvider`.** `midnight-js-dapp-connector-proof-provider` depends on `@midnight-ntwrk/dapp-connector-api`, the browser wallet extension interface. It proves *through* the wallet extension and cannot run in a CLI. `httpClientProofProvider` takes a proof server URL and the `zkConfigProvider` directly.
+**`httpClientProofProvider`, not `dappConnectorProofProvider`.** `midnight-js-dapp-connector-proof-provider` depends on `@midnight-ntwrk/dapp-connector-api`, the browser wallet extension interface. It proves *through* the extension and cannot run in a CLI.
 
-**`NodeZkConfigProvider`, not `FetchZkConfigProvider`.** `NodeZkConfigProvider(dir)` reads `keys/<circuit>.prover`, `keys/<circuit>.verifier` and `zkir/<circuit>.bzkir` from the filesystem with `fs.readFile`. `FetchZkConfigProvider` fetches the same three paths over HTTP for browsers. A node-side deploy script points `NodeZkConfigProvider` at `build/datum-full`.
+**`NodeZkConfigProvider`, not `FetchZkConfigProvider`.** `NodeZkConfigProvider(dir)` reads `keys/<circuit>.prover`, `keys/<circuit>.verifier` and `zkir/<circuit>.bzkir` from the filesystem. `FetchZkConfigProvider` fetches the same three paths over HTTP for browsers.
 
-Note that the provider reads `.bzkir`, the binary ZKIR — which a `--skip-zk` build does not produce. Deployment requires the full compile.
+Note that the provider reads `.bzkir`, the binary ZKIR, which a `--skip-zk` build does not produce. Deployment requires the full compile.
 
 ### Proof server, measured
 
-`midnightntwrk/proof-server:8.1.0` (the Preview-matching tag; `latest` is the same digest).
+`midnightntwrk/proof-server:8.1.0` — the tag matching Preview.
 
 | | |
 |---|---|
 | Image on disk | 142 MB (`arm64/linux`) |
 | Download | 25.5 MiB compressed, 47 s |
 | Container writable layer | 34.2 MB (SRS fetched from `srs.midnight.network` at startup) |
-| Idle memory | **7.1 MiB** |
-| Memory cap applied | **2 GiB** (`--memory=2g --memory-swap=2g`), 0.34% used |
-| Docker VM available | 4.1 GB, 5 CPUs |
+| Idle memory | 7.1 MiB |
+| Memory cap applied | 2 GiB (`--memory=2g --memory-swap=2g`), 0.34% used |
 
 ```bash
 docker run -d --name datum-proof --memory=2g --memory-swap=2g --cpus=4 \
   -p 6300:6300 midnightntwrk/proof-server:8.1.0
 ```
 
-`GET /` and `GET /health` return 200; `POST /check` returns 400 on a malformed body, so the service is live and routing. The cap is explicit rather than default — the image is distroless and takes what it is given otherwise. Memory under real proving load is **UNMEASURED**: it needs a valid `/prove` request, which needs a deployable contract.
-
-The ledger-9 equivalent is `midnightntwrk/proof-server:9.0.0-rc.7` (31.6 MiB compressed, arm64).
-
-### Funding, when it unblocks
-
-Deployment needs tNIGHT registered for tDUST. The route is **half scriptable**:
-
-1. **Scriptable.** Derive the wallet from a seed with the wallet SDK — `HDWallet.fromSeed`, giving the shielded, unshielded and DUST sub-wallets. The seed comes from `WALLET_SEED` in the environment so re-runs reuse the same wallet. Print the `mn_addr_preview1...` unshielded address.
-2. **Requires a human and a browser.** The faucet at <https://midnight-tmnight-preview.nethermind.dev/> is captcha-gated. The page is a 710-byte SPA shell that loads its challenge in JavaScript; there is no scriptable path, and the captcha must be completed by a person.
-3. **Scriptable.** Register the tNIGHT for tDUST generation via the wallet SDK, or in Lace via **Generate tDUST**. Holding tNIGHT generates nothing until registration lands.
-4. Wait for the tDUST tank to fill, then deploy.
-
-Step 2 is the only manual step, and it is manual by design.
-
-## License
-
-[Apache-2.0](LICENSE).
+`GET /` and `GET /health` return 200. The cap is explicit rather than default — the image is distroless and takes what it is given otherwise. Memory under real proving load is **UNMEASURED**.
 
 ## Scale conventions
 
@@ -241,15 +284,15 @@ The dev loop uses `--skip-zk`. These are the numbers for the real thing, with pr
 compact compile contract/src/datum.compact build/datum-full
 ```
 
-**Host:** Apple M2, 8 cores, 8 GB RAM, macOS 25.5.0.
+**Host:** Apple M2, 8 cores, 8 GB RAM, macOS 25.5.0. Toolchain 0.31.1.
 
-| Run | Wall clock | Peak RSS | Swaps |
-|---|---|---|---|
-| 1 (cold) | 13.46 s | 400.7 MiB | 0 |
-| 2 | 11.01 s | 406.1 MiB | 0 |
-| 3 | 10.86 s | 419.2 MiB | 0 |
+| Run | Wall clock | Peak RSS |
+|---|---|---|
+| 1 | 11.33 s | 364.3 MiB |
+| 2 | 10.71 s | 391.7 MiB |
+| 3 | 11.26 s | 394.4 MiB |
 
-Peak RSS is `maximum resident set size` from `/usr/bin/time -l`, cross-checked against a 2-second sampler summing RSS across every `compactc`/`zkir` process, which peaked at 383 MiB. Zero swap events on an 8 GB machine — key generation for this circuit is not memory-bound and needs no headroom management.
+Peak RSS is `maximum resident set size` from `/usr/bin/time -l`. Zero swap events on an 8 GB machine — key generation for this circuit is not memory-bound.
 
 Generated artefacts:
 
@@ -259,34 +302,33 @@ Generated artefacts:
 | `keys/attest.verifier` | 2,119 |
 | `zkir/attest.zkir` | 19,862 |
 | `zkir/attest.bzkir` | 1,272 |
-| `contract/index.js` | 42,499 |
-| `contract/index.d.ts` | 2,571 |
-| `contract/index.js.map` | 2,214 |
+| `contract/index.js` | 41,476 |
+| `contract/index.d.ts` | 2,469 |
+| `contract/index.js.map` | 2,194 |
 | `compiler/contract-info.json` | 6,103 |
-| `compiler/contract-manifest.json` | 1,521 |
-| **Total** | **~10 MB** |
+| **Total** | **9.6 MB** |
 
-One circuit is proved — `attest`. `venueDigest` is `pure`, so it compiles to no ZK circuit at all and costs nothing here.
+One circuit is proved — `attest`. `venueDigest` is `pure`, so it compiles to no ZK circuit and costs nothing here.
 
-**Key generation is deterministic.** Three independent compiles into three separate directories produced byte-identical keys:
+### Key determinism, reproducible
 
-```
-a1789f2a1809a9fa8b54818ab6dca090…  attest.prover   (all 3 runs)
-ccc85e1495d7a5e72e9aff09cfe89cb4…  attest.verifier (all 3 runs)
-```
+Three independent compiles into three separate directories produce byte-identical keys. Toolchain 0.31.1 emits no `contract-manifest.json`, so the hashes are recorded here directly. Regenerate and compare:
 
-So a reviewer can regenerate the keys and compare hashes against the `contract-manifest.json` in this repo rather than taking anyone's word for the artefact.
-
-**`--skip-zk` is a faithful dev loop.** The only difference in generated JavaScript between a `--skip-zk` build and a full build is the `expectedVk` constant, empty in the former and carrying the verifier key hash in the latter:
-
-```diff
--export const expectedVk = {};
-+export const expectedVk = {
-+  'attest': '…',
-+};
+```bash
+compact compile contract/src/datum.compact /tmp/datum-verify
+shasum -a 256 /tmp/datum-verify/keys/attest.prover /tmp/datum-verify/keys/attest.verifier
 ```
 
-Nothing else differs. The 22 tests pass identically against both builds.
+Expected output:
+
+```
+a1789f2a1809a9fa8b54818ab6dca0901ca828feeb406bdbca3260f039bc14be  keys/attest.prover
+ccc85e1495d7a5e72e9aff09cfe89cb411bf3279abe5cf147ae6243a61b4e47a  keys/attest.verifier
+```
+
+Those two hashes are the artefact fingerprint. Nothing here asks to be taken on trust.
+
+**`--skip-zk` is a faithful dev loop.** A `--skip-zk` build differs from a full build only by the absence of the `keys/` directory and `zkir/attest.bzkir`. The 22 tests pass identically against both.
 
 ## Reading `requiredRatio`
 
@@ -302,9 +344,13 @@ Reading the flag without the ratio is a category error. Anything below `RATIO_SC
 
 ## How a judge tests this
 
-1. `compact compile --skip-zk contract/src/datum.compact build/datum` — must exit 0.
+1. `compact compile --skip-zk contract/src/datum.compact build/datum` — must exit 0 (toolchain 0.31.1).
 2. `npm install && npm test` — 22 tests, all passing.
-3. Optionally `compact compile contract/src/datum.compact build/datum-full` for the real proving keys — ~11 s and ~400 MiB on an 8 GB M2. Compare the key hashes against the table above.
+3. Optionally `compact compile contract/src/datum.compact build/datum-full` for the real proving keys — ~11 s and ~390 MiB on an 8 GB M2. Compare the two key hashes against [Key determinism](#key-determinism-reproducible).
 4. Read the headline test first. It is the product in twenty lines.
 5. Read the `for` loop in [`contract/src/datum.compact`](contract/src/datum.compact). The two positivity asserts and the cross-multiplied inequality are the whole soundness argument, and the tests that break them are named after them.
 6. Grep the contract for `disclose(`. There are six. Each carries a one-line justification directly above it. Four are public inputs going back out. Two are derived from private data — the hiding book commitment and the one-bit verdict — and both are the intended output of the attestation.
+
+## License
+
+[Apache-2.0](LICENSE).

@@ -98,8 +98,10 @@ export const deploy = async (privateState) => {
  */
 export const attest = async ({ privateState, venues, ratio, timestamp = 1_700_000_000n }) => {
   const { contract, address, initial } = await deploy(privateState);
+  // Runtime 0.16.0's createCircuitContext takes no circuitId argument, and
+  // exposes the query context flat on the CircuitContext rather than nested
+  // under callContext. Those two lines are the whole ledger-8 adaptation.
   const context = createCircuitContext(
-    'attest',
     address,
     COIN_PUBLIC_KEY,
     initial.currentContractState,
@@ -111,7 +113,7 @@ export const attest = async ({ privateState, venues, ratio, timestamp = 1_700_00
     ratio,
     timestamp,
   );
-  return ledger(after.callContext.currentQueryContext.state);
+  return ledger(after.currentQueryContext.state);
 };
 
 export { pureCircuits, padVenues as venues8 };
