@@ -81,6 +81,99 @@ compact compile --skip-zk contract/src/hello.compact build/hello
 
 `contract/src/hello.compact` is a permanent toolchain smoke test, not part of the attestation logic. It exists so that a failure to compile can always be localised to either the toolchain or the contract, never ambiguously both.
 
+## Deployment
+
+**Status: BLOCKED on a network version boundary. Not deployed.** No contract address, no transaction hash. The block is upstream of anything in this repo and upstream of funding.
+
+### Preview endpoints
+
+From the [Environment reference](https://docs.midnight.network/guides/networks-and-environments), verified live:
+
+| Service | Endpoint |
+|---|---|
+| Network ID | `preview` |
+| Node RPC | `https://rpc.preview.midnight.network` |
+| Node WebSocket | `wss://rpc.preview.midnight.network` |
+| Indexer (GraphQL) | `https://indexer.preview.midnight.network/api/v4/graphql` |
+| Indexer (WebSocket) | `wss://indexer.preview.midnight.network/api/v4/graphql/ws` |
+| Proof server | `http://127.0.0.1:6300` (always local) |
+| Faucet | <https://midnight-tmnight-preview.nethermind.dev/> |
+
+Both are up. `system_chain` returns `Midnight Preview`; the indexer answers at block 606908.
+
+### The blocker
+
+This contract is compiled for **ledger 9**. Preview runs **ledger 8**.
+
+| | This repo | Preview (live) |
+|---|---|---|
+| Compact toolchain | 0.34.0 | 0.31.1 |
+| Compact runtime | 0.19.0 | 0.16.0 |
+| On-chain runtime | `onchain-runtime-v4` 4.0.0-rc.3 | `onchain-runtime-v3` 3.0.0 |
+| Ledger | `ledger-9.1.0.0-rc.3` | `ledger-v8` 8.1.0 |
+| Midnight.js | would need 5.0.0-beta.7 | 4.1.1 |
+| Proof server | would need 9.0.0-rc.7 | 8.1.0 |
+
+Node version was read from the live chain, not from a table:
+
+```bash
+curl -s -X POST https://rpc.preview.midnight.network \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"system_version","params":[]}'
+# {"jsonrpc":"2.0","id":1,"result":"1.0.1-5edf8ddd"}
+```
+
+That matches the Preview row of the [compatibility matrix](https://docs.midnight.network/relnotes/support-matrix) exactly, so the matrix is current rather than stale. The dependency pins confirm the split from the other direction — `@midnight-ntwrk/midnight-js-protocol@4.1.1` depends on `ledger-v8@8.1.0` and `onchain-runtime-v3@3.0.0`, while `@5.0.0-beta.7` depends on `ledger-v9@1.0.0-rc.3` and `onchain-runtime-v4@4.0.0-rc.3`. There is no version of Midnight.js that bridges them, because they are different chains.
+
+The Compact 0.34.0 release notes say it plainly: *"Ledger version 9 will be, but is not yet, deployed."*
+
+Every ledger-9 component is still a release candidate: Midnight.js is at `5.0.0-beta.7`, the proof server at `9.0.0-rc.7`. There is no stable ledger-9 stack to deploy against and no ledger-9 public network to deploy to.
+
+### Provider architecture, for when the network moves
+
+Determined from package sources, not inference.
+
+**The proof server consumes the prover key.** `httpClientProofProvider` calls `zkConfigProvider.get(circuitId)` to read the key material locally, then POSTs it to the proof server's `/prove` endpoint as `application/octet-stream`. So the 10 MB `attest.prover` is read by the client and shipped over HTTP on every proof. On a Node deploy that is a local file read plus a loopback POST. In a browser it would be a 10 MB download first — the reason a frontend should serve artifacts from the same origin and cache them.
+
+**`httpClientProofProvider`, not `dappConnectorProofProvider`.** `midnight-js-dapp-connector-proof-provider` depends on `@midnight-ntwrk/dapp-connector-api`, the browser wallet extension interface. It proves *through* the wallet extension and cannot run in a CLI. `httpClientProofProvider` takes a proof server URL and the `zkConfigProvider` directly.
+
+**`NodeZkConfigProvider`, not `FetchZkConfigProvider`.** `NodeZkConfigProvider(dir)` reads `keys/<circuit>.prover`, `keys/<circuit>.verifier` and `zkir/<circuit>.bzkir` from the filesystem with `fs.readFile`. `FetchZkConfigProvider` fetches the same three paths over HTTP for browsers. A node-side deploy script points `NodeZkConfigProvider` at `build/datum-full`.
+
+Note that the provider reads `.bzkir`, the binary ZKIR — which a `--skip-zk` build does not produce. Deployment requires the full compile.
+
+### Proof server, measured
+
+`midnightntwrk/proof-server:8.1.0` (the Preview-matching tag; `latest` is the same digest).
+
+| | |
+|---|---|
+| Image on disk | 142 MB (`arm64/linux`) |
+| Download | 25.5 MiB compressed, 47 s |
+| Container writable layer | 34.2 MB (SRS fetched from `srs.midnight.network` at startup) |
+| Idle memory | **7.1 MiB** |
+| Memory cap applied | **2 GiB** (`--memory=2g --memory-swap=2g`), 0.34% used |
+| Docker VM available | 4.1 GB, 5 CPUs |
+
+```bash
+docker run -d --name datum-proof --memory=2g --memory-swap=2g --cpus=4 \
+  -p 6300:6300 midnightntwrk/proof-server:8.1.0
+```
+
+`GET /` and `GET /health` return 200; `POST /check` returns 400 on a malformed body, so the service is live and routing. The cap is explicit rather than default — the image is distroless and takes what it is given otherwise. Memory under real proving load is **UNMEASURED**: it needs a valid `/prove` request, which needs a deployable contract.
+
+The ledger-9 equivalent is `midnightntwrk/proof-server:9.0.0-rc.7` (31.6 MiB compressed, arm64).
+
+### Funding, when it unblocks
+
+Deployment needs tNIGHT registered for tDUST. The route is **half scriptable**:
+
+1. **Scriptable.** Derive the wallet from a seed with the wallet SDK — `HDWallet.fromSeed`, giving the shielded, unshielded and DUST sub-wallets. The seed comes from `WALLET_SEED` in the environment so re-runs reuse the same wallet. Print the `mn_addr_preview1...` unshielded address.
+2. **Requires a human and a browser.** The faucet at <https://midnight-tmnight-preview.nethermind.dev/> is captcha-gated. The page is a 710-byte SPA shell that loads its challenge in JavaScript; there is no scriptable path, and the captcha must be completed by a person.
+3. **Scriptable.** Register the tNIGHT for tDUST generation via the wallet SDK, or in Lace via **Generate tDUST**. Holding tNIGHT generates nothing until registration lands.
+4. Wait for the tDUST tank to fill, then deploy.
+
+Step 2 is the only manual step, and it is manual by design.
+
 ## License
 
 [Apache-2.0](LICENSE).
