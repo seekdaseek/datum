@@ -1,0 +1,10 @@
+pragma language_version 0.26;
+
+import CompactStandardLibrary;
+
+export ledger count: Counter;
+
+export circuit bump(n: Uint<16>): Uint<0..65537> {
+  count.increment(1);
+  return n + 1;
+}
