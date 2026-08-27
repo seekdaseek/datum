@@ -3,3 +3,5 @@ build/
 dist/
 .env
 .DS_Store
+midnight-level-db/
+*.ldb
