@@ -1,0 +1,121 @@
+pragma language_version 0.26;
+
+import CompactStandardLibrary;
+
+// ===========================================================================
+// datum — realisable-value solvency attestation
+// ===========================================================================
+//
+// Proves: the depth-adjusted realisable value of a private lending book covers
+// its private debt at a PUBLIC required collateral ratio, against PUBLIC venue
+// reserves. Publishes the verdict and the public inputs. Publishes no position.
+//
+// ---------------------------------------------------------------------------
+// SCALE CONVENTION
+// ---------------------------------------------------------------------------
+// Every quantity entering this contract is normalised to MICRO-UNITS (1e-6 of
+// one whole token) before it is passed in. Raw token base units are NOT
+// accepted: an 18-decimal token at any realistic pool size overflows the
+// budget below, and mixing decimal conventions across venues silently corrupts
+// the comparison. Normalisation is the caller's job and is checked by the
+// venue-array hash, which pins the exact numbers a verifier must recompute.
+//
+// Normalised quantities are capped at 2^64. That is ~1.8e19 micro-units, i.e.
+// ~1.8e13 whole tokens, which is above any real pool reserve or book size.
+//
+// RATIO_SCALE = 1_000_000. requiredRatio is the collateral ratio times
+// RATIO_SCALE, so 1.20x is stored as 1_200_000.
+//
+// ---------------------------------------------------------------------------
+// OVERFLOW BUDGET — derived, not guessed
+// ---------------------------------------------------------------------------
+// Compact's Uint<n> is Uint<0..2^n> with an EXCLUSIVE upper bound, so a value
+// of type Uint<64> has maximum 2^64 - 1. Arithmetic widens the result type
+// automatically and the compiler enforces the exact declared width, so every
+// intermediate below is sized from its true maximum:
+//
+//   q_i, X_i, Y_i, p_i, debt   <  2^64            (capped by convention above)
+//   X_i + q_i                  <  2^65
+//   p_i * (X_i + q_i)          <  2^129           per-slot LHS
+//   Y_i * q_i                  <  2^128           per-slot RHS
+//   sum(p_i) over 8 slots      <  2^67            (8 = 2^3 slots)
+//   sum(p_i) * RATIO_SCALE     <  2^87            (RATIO_SCALE < 2^20)
+//   debt * requiredRatio       <  2^128           overall RHS
+//
+// The widest intermediate is 2^129. Accumulators are declared Uint<136> —
+// seven bits of headroom over the worst case, so a future change to SLOTS or
+// to RATIO_SCALE does not silently sit on the boundary. The compiler's own
+// limit is a maximum Uint value of 2^248 - 1, so 136 bits is well inside it.
+//
+// ---------------------------------------------------------------------------
+// PUBLIC / PRIVATE SPLIT
+// ---------------------------------------------------------------------------
+// PUBLIC  (circuit parameters, written to the ledger, independently
+//          recomputable): venue reserves per slot, venue identifier, block
+//          height, required collateral ratio.
+// PRIVATE (witness, never disclosed): position sizes, debt, claimed proceeds
+//          lower bounds, commitment nonce.
+//
+// Venue depth is on-chain state. It is a public input on purpose: if the
+// prover supplied it privately, the verdict would rest on numbers no verifier
+// could check.
+// ===========================================================================
+
+// One venue slot's PUBLIC state. Eight of these form the attestation's public
+// depth picture. blockHeight pins the reserves to a checkable moment so a
+// verifier can fetch the same pool at the same height and get the same X, Y.
+export struct VenueSlot {
+  venueId: Bytes<32>;
+  reserveX: Uint<64>;
+  reserveY: Uint<64>;
+  blockHeight: Uint<64>;
+}
+
+// ---------------------------------------------------------------------------
+// LEDGER — public state
+// ---------------------------------------------------------------------------
+
+// Number of attestations published. Monotonic, so a consumer can tell a fresh
+// attestation from a replayed one.
+export ledger attestationCount: Counter;
+
+// Commitment to the private book: positions + debt + nonce. Binds this
+// attestation to one specific book without revealing it. The nonce prevents
+// two attestations over the same book being linked by an equal commitment.
+export ledger bookCommitment: Bytes<32>;
+
+// The venue state actually used by the proof, in the clear, so anyone can
+// recheck it against the chain.
+export ledger venues: Vector<8, VenueSlot>;
+
+// Hash over the whole venue array, so a verifier recomputes one value and
+// compares once rather than walking eight slots field by field.
+export ledger venuesHash: Bytes<32>;
+
+// Required collateral ratio, scaled by RATIO_SCALE (1.20x -> 1_200_000).
+// PUBLIC and fixed at attestation time. Never prover-chosen.
+export ledger requiredRatio: Uint<64>;
+
+// The verdict. True iff realisable proceeds cleared debt * requiredRatio.
+export ledger covered: Boolean;
+
+// Attestation time, Unix seconds.
+export ledger attestedAt: Uint<64>;
+
+// ---------------------------------------------------------------------------
+// WITNESS — private state, never disclosed
+// ---------------------------------------------------------------------------
+
+// Size to be sold into each venue slot, micro-units. Unused slots are zero.
+witness positionSizes(): Vector<8, Uint<64>>;
+
+// Claimed LOWER BOUND on proceeds from each slot, micro-units. The circuit
+// enforces p_i * (X_i + q_i) <= Y_i * q_i, so an overclaim fails the proof and
+// an underclaim only makes the book look worse than it is.
+witness claimedProceeds(): Vector<8, Uint<64>>;
+
+// Total debt the book must cover, micro-units.
+witness debtAmount(): Uint<64>;
+
+// Commitment nonce. Must never be reused across attestations.
+witness commitmentNonce(): Bytes<32>;
