@@ -23,5 +23,8 @@
     "@midnightntwrk/wallet-sdk": "^1.2.0",
     "rxjs": "^7.8.2",
     "ws": "^8.21.3"
+  },
+  "overrides": {
+    "@midnight-ntwrk/onchain-runtime-v3": "3.0.0"
   }
 }

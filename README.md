@@ -168,27 +168,122 @@ Same keys, same hashes — see above.
 
 ## Deployment
 
-**Status: not yet deployed.** The contract now targets the network that exists; deployment is the next step.
+Two targets. Read the labels — one is a real public network, the other is a local chain on a laptop.
 
-### Preview endpoints
+### LOCAL deployment (network `undeployed`) — DONE
 
-| Service | Endpoint |
-|---|---|
-| Network ID | `preview` |
-| Node RPC | `https://rpc.preview.midnight.network` |
-| Node WebSocket | `wss://rpc.preview.midnight.network` |
-| Indexer (GraphQL) | `https://indexer.preview.midnight.network/api/v4/graphql` |
-| Indexer (WebSocket) | `wss://indexer.preview.midnight.network/api/v4/graphql/ws` |
-| Proof server | `http://127.0.0.1:6300` (always local) |
-| Faucet | <https://midnight-tmnight-preview.nethermind.dev/> |
-
-Both are live: `system_chain` returns `Midnight Preview`, and the indexer answers.
+Deployed and attested on a local Midnight stack from [midnight-local-dev](https://github.com/midnightntwrk/midnight-local-dev): a real node, a real indexer and a real proof server in Docker. **This is a local chain, not a public one.** The address below is not reachable by anyone else and proves the software works end to end, nothing more.
 
 | Deliverable | Value |
 |---|---|
-| Contract address | *pending deployment* |
-| Transaction hash | *pending deployment* |
-| Indexer verification query | *pending deployment* |
+| Network | `undeployed` (local Docker stack) |
+| **Contract address** | `3d47d56ec4e249dec84ef2147653b9d6f43569f1b825256094c1f3c9fddfb100` |
+| **Deploy tx hash** | `277d8b5fa8693aef15d3b622e3162c56ac2cb07b94a3343b561790df7086b894` |
+| Deploy block | 43 |
+| **Attest tx hash** | `3e7cc4e320c5eaaef54eb1cd1b614bf13ed03da4250627ae6ff5b543d5b973e5` |
+| Attest block | 79 |
+| Attest status | `SucceedEntirely` |
+
+The attested book is the headline case: solvent at oracle marks, insolvent at realisable prices. The verdict that landed on chain is **`covered: false`**.
+
+**The indexer query that proves it landed.** The `attest` entry point appears as a `ContractCall` at the contract's address:
+
+```bash
+curl -s -X POST http://localhost:8088/api/v4/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"{ contractAction(address: \"3d47d56ec4e249dec84ef2147653b9d6f43569f1b825256094c1f3c9fddfb100\") { __typename address ... on ContractCall { entryPoint deploy { address } } transaction { hash block { height } } } }"}'
+```
+
+```json
+{"data":{"contractAction":{
+  "__typename":"ContractCall",
+  "address":"3d47d56ec4e249dec84ef2147653b9d6f43569f1b825256094c1f3c9fddfb100",
+  "entryPoint":"attest",
+  "deploy":{"address":"3d47d56ec4e249dec84ef2147653b9d6f43569f1b825256094c1f3c9fddfb100"},
+  "transaction":{"hash":"3e7cc4e320c5eaaef54eb1cd1b614bf13ed03da4250627ae6ff5b543d5b973e5","block":{"height":79}}}}}
+```
+
+`scripts/verify.mjs` reads the published state back using only the indexer — no wallet, no seed, no private input, which is exactly what a third party can do:
+
+```bash
+node scripts/verify.mjs --network undeployed --address 3d47d56e…
+```
+
+```
+attestationCount : 1
+covered          : false   <-- the verdict
+requiredRatio    : 1200000  (= 1.2x)
+bookCommitment   : 1543fcb5bc18069ab4d0715dda68dfe09702360353fc4a87d32104ad29a90c74
+venuesHash       : e8c1c5e2de006d6082c4a6c50e2ea36d4545129de135551bcfdb875094b465c7
+
+venuesHash recomputed from the published venue array: MATCHES
+```
+
+That `bookCommitment` is byte-identical to the one the simulation tests produce for the same book, so the on-chain artefact and the local test fixture agree.
+
+### PREVIEW deployment (public network) — PENDING
+
+| Deliverable | Value |
+|---|---|
+| Contract address | *pending — faucet outage* |
+| Transaction hash | *pending — faucet outage* |
+| Indexer query | *pending — faucet outage* |
+
+Blocked on funding, not on code. The Preview faucet at <https://midnight-tmnight-preview.nethermind.dev/> is returning a backend outage; the page loads and the service does not answer. The wallet address is derived and waiting:
+
+```
+mn_addr_preview1n2cuarawfep4s693f85qdhnej00u3jkumd3ye00zpea9pa2rl62sqtrt3l
+```
+
+Moving there is a one-word change — `--network preview` — because every network-dependent value lives in `scripts/config.mjs`.
+
+### Reproducing the local deployment
+
+```bash
+git clone https://github.com/midnightntwrk/midnight-local-dev.git
+cd midnight-local-dev && npm install
+docker compose -p midnight-local-dev -f standalone.yml up -d   # node + indexer + proof server
+npm start                                                       # menu option 2, paste the address
+```
+
+```bash
+node scripts/wallet.mjs --network undeployed    # prints the address to fund
+node scripts/deploy.mjs --network undeployed    # deploy, then attest
+node scripts/verify.mjs --network undeployed --address <hex>
+```
+
+`scripts/deploy.mjs` also accepts `--address <hex>` to attest against an already-deployed contract, and `--deploy-only` to stop before attesting.
+
+### Docker memory, capped explicitly
+
+Three services on a 3.9 GiB Docker VM shared with an unrelated container. Caps were added to `standalone.yml` rather than left at the default:
+
+| Service | Cap | Observed | Observed peak |
+|---|---|---|---|
+| `midnight-node` | 900 MiB | 175–192 MiB | 21% of cap |
+| `midnight-indexer` | 900 MiB | 18–20 MiB | 2% of cap |
+| `midnight-proof-server` | 1200 MiB | 6.7 MiB idle | **82 MiB during real proving** |
+
+```yaml
+mem_limit: 900m
+memswap_limit: 900m
+```
+
+Total ceiling 3000 MiB against 3917 MiB available, and actual combined usage stayed under 300 MiB. **Proof-server memory under real proving load is now measured rather than unknown: 82 MiB peak** while proving the `attest` circuit — 7% of its cap.
+
+### Network config lives in one place
+
+`scripts/config.mjs` holds the network id together with its endpoints, keyed by network, so a switch is a key change and nothing else:
+
+```js
+export const NETWORKS = {
+  undeployed: { id: 'undeployed', node: 'http://localhost:9944',  indexerHttp: 'http://localhost:8088/api/v4/graphql', ... },
+  preview:    { id: 'preview',    node: 'https://rpc.preview.midnight.network', ... },
+  preprod:    { id: 'preprod',    node: 'https://rpc.preprod.midnight.network', ... },
+};
+```
+
+`applyNetwork()` is the only place `setNetworkId` is called, and it runs before any provider, wallet or address helper is constructed. `getNetworkId()` throws until it is set, and a wrong value fails later rather than at the call, so having exactly one entry point matters.
 
 ### Provider architecture
 
