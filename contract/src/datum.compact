@@ -119,3 +119,126 @@ witness debtAmount(): Uint<64>;
 
 // Commitment nonce. Must never be reused across attestations.
 witness commitmentNonce(): Bytes<32>;
+
+// ---------------------------------------------------------------------------
+// COMMITMENT PREIMAGE
+// ---------------------------------------------------------------------------
+// The book commitment binds positions AND debt together in a single preimage,
+// with the nonce supplied as the commitment randomness. Binding all three
+// matters: a commitment over positions alone would stay stable while the
+// prover swapped the debt figure between attestations, and a commitment
+// without the nonce would let two attestations over the same book be linked
+// by an equal commitment.
+struct BookPreimage {
+  positions: Vector<8, Uint<64>>;
+  debt: Uint<64>;
+}
+
+// ---------------------------------------------------------------------------
+// VENUE DIGEST
+// ---------------------------------------------------------------------------
+// Exported as a pure circuit so a verifier can recompute the digest in
+// TypeScript from public data alone and compare it against venuesHash in one
+// step. The preimage is the whole Vector<8, VenueSlot> in slot order, each
+// slot in declared field order: venueId, reserveX, reserveY, blockHeight.
+// It covers the identifiers and block heights, not just the reserves — a
+// digest over reserves alone would let the same numbers be re-attributed to a
+// different pool or a different height.
+export pure circuit venueDigest(venueState: Vector<8, VenueSlot>): Bytes<32> {
+  return persistentHash<Vector<8, VenueSlot>>(venueState);
+}
+
+// ---------------------------------------------------------------------------
+// THE ATTESTATION
+// ---------------------------------------------------------------------------
+// Public inputs are circuit parameters. Private inputs arrive via witnesses.
+// The circuit hard-asserts the per-slot realisability constraints and then
+// COMPUTES the coverage verdict — it does not assert coverage. An insolvent
+// book still produces a valid attestation; it produces one that says NOT
+// COVERED. That is the point: the artefact is a measurement, not a gate.
+export circuit attest(
+  venueState: Vector<8, VenueSlot>,
+  ratio: Uint<64>,
+  timestamp: Uint<64>
+): [] {
+  const q = positionSizes();
+  const p = claimedProceeds();
+  const debt = debtAmount();
+  const nonce = commitmentNonce();
+
+  // The bar must be a real bar. A zero ratio would make every book "covered".
+  assert(ratio > 0, "datum: requiredRatio must be positive");
+
+  for (const i of 0..8) {
+    const slot = venueState[i];
+
+    // SOUNDNESS: X > 0 and Y > 0 are required on EVERY slot, padding
+    // included, and they are not decoration.
+    //
+    // The per-slot constraint below is p*(X+q) <= Y*q. On a padding slot
+    // (q = 0) it reduces to p*X <= 0, which forces p = 0 only while X > 0.
+    // If X were also allowed to be 0 the constraint would read 0 <= 0, which
+    // holds for every p — and an unused slot could then claim unbounded
+    // proceeds and carry an insolvent book over the line. Y > 0 closes the
+    // mirror case where a slot contributes proceeds from a pool with nothing
+    // in it to sell into.
+    assert(slot.reserveX > 0, "datum: reserveX must be positive in every slot, padding included");
+    assert(slot.reserveY > 0, "datum: reserveY must be positive in every slot, padding included");
+
+    // Realisable proceeds from selling q into constant-product reserves are
+    // Y*q/(X+q). There is no division in a circuit, so the prover supplies p
+    // as a claimed lower bound and the circuit checks the cross-multiplied
+    // inequality instead. Overclaiming p fails here; underclaiming it only
+    // makes the book look worse than it is.
+    //
+    // Accumulators are annotated at Uint<136> so the width is visible at the
+    // point of use rather than inferred silently: p*(X+q) < 2^129 and
+    // Y*q < 2^128, both inside 136 bits with headroom to spare.
+    const lhs: Uint<136> = p[i] * (slot.reserveX + q[i]);
+    const rhs: Uint<136> = slot.reserveY * q[i];
+    assert(lhs <= rhs, "datum: claimed proceeds exceed realisable proceeds for this slot");
+  }
+
+  // Summed term by term rather than folded with a downcast. A fold into a
+  // fixed-width accumulator would need an `as` on each step, and every such
+  // downcast is a run-time failure path that has nothing to do with the
+  // property being proved. Written out, the compiler infers the exact width:
+  // eight values each under 2^64 sum to under 2^67.
+  const proceeds = p[0] + p[1] + p[2] + p[3] + p[4] + p[5] + p[6] + p[7];
+
+  // The coverage test, scale-corrected. proceeds is in micro-units; ratio is
+  // scaled by RATIO_SCALE = 1_000_000 (150% is 1_500_000). Multiplying the
+  // left side by RATIO_SCALE puts both sides in the same scale without
+  // dividing. LHS < 2^87, RHS < 2^128.
+  const isCovered = proceeds * 1000000 >= debt * ratio;
+
+  attestationCount.increment(1);
+
+  // DISCLOSE: the commitment is a hiding commitment over the private book.
+  // What goes public is persistentCommit(positions, debt, nonce), not the
+  // book. This is the intended binding artefact — it lets a later attestation
+  // be checked against the same book without revealing it.
+  bookCommitment = disclose(persistentCommit<BookPreimage>(
+    BookPreimage { positions: q, debt: debt }, nonce));
+
+  // DISCLOSE: venueState is a public input. Venue reserves, identifiers and
+  // block heights are on-chain state that anyone can already read; publishing
+  // them is what makes the attestation recheckable.
+  venues = disclose(venueState);
+
+  // DISCLOSE: a digest of the public venue array above. Public in, public out.
+  venuesHash = disclose(venueDigest(venueState));
+
+  // DISCLOSE: the required ratio is public and fixed at attestation time.
+  // Publishing it is what stops the prover from choosing the bar afterwards.
+  requiredRatio = disclose(ratio);
+
+  // DISCLOSE: the verdict. This is one bit derived from the private p and
+  // debt, and it is the single deliberate leak in the contract — the entire
+  // product is this bit. Everything the bit is computed from stays private:
+  // the book, the debt, and the per-slot proceeds are never written out.
+  covered = disclose(isCovered);
+
+  // DISCLOSE: the attestation timestamp is a public input.
+  attestedAt = disclose(timestamp);
+}
