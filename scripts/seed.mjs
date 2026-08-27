@@ -10,6 +10,8 @@ import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { randomBytes } from 'node:crypto';
+
 import { HDWallet, Roles, createKeystore, generateRandomSeed } from '@midnightntwrk/wallet-sdk';
 import { getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 
@@ -32,14 +34,47 @@ const assertEnvIgnored = () => {
   if (!patterns.includes('.env')) die('.env is not listed in .gitignore — refusing to handle a seed');
 };
 
-const readSeedHex = () => {
+/** Read one key out of .env, or null. Never logs the value. */
+const readEnvValue = (key) => {
   if (!existsSync(ENV_PATH)) return null;
+  const re = new RegExp(`^\\s*${key}\\s*=\\s*(.+?)\\s*$`);
   for (const line of readFileSync(ENV_PATH, 'utf8').split('\n')) {
-    const m = /^\s*WALLET_SEED\s*=\s*(.+?)\s*$/.exec(line);
+    const m = re.exec(line);
     if (m) return m[1];
   }
   return null;
 };
+
+/** Append one key to .env at mode 0600. The value is never returned to a logger. */
+const appendEnvValue = (key, value) => {
+  const existing = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8') : '';
+  const body = existing && !existing.endsWith('\n') ? existing + '\n' : existing;
+  writeFileSync(ENV_PATH, `${body}${key}=${value}\n`, { mode: 0o600 });
+  chmodSync(ENV_PATH, 0o600);
+};
+
+/**
+ * Return a secret from .env, generating and persisting one only if absent.
+ * Used for both the wallet seed and the private-state-store password: neither
+ * belongs in source, and a hardcoded store password makes the store's
+ * encryption worthless the moment the repo is public.
+ */
+export const ensureEnvSecret = (key, generate) => {
+  assertEnvIgnored();
+  const found = readEnvValue(key);
+  if (found !== null) return { value: found, generated: false };
+  const value = generate();
+  appendEnvValue(key, value);
+  return { value, generated: true };
+};
+
+/**
+ * The private-state-store password. levelPrivateStateProvider requires 16+
+ * characters across three of four character classes; this generates 32 bytes
+ * of base64 plus a fixed suffix guaranteeing the classes are present.
+ */
+export const ensureStorePassword = () =>
+  ensureEnvSecret('PRIVATE_STATE_PASSWORD', () => `${randomBytes(24).toString('base64url')}aA1!`);
 
 /**
  * Return the seed hex, generating and persisting one only if absent.
@@ -49,20 +84,13 @@ const readSeedHex = () => {
  * @returns {{ seedHex: string, generated: boolean }}
  */
 export const ensureSeed = () => {
-  assertEnvIgnored();
-  let seedHex = readSeedHex();
-  if (seedHex !== null) {
-    if (!/^[0-9a-f]+$/i.test(seedHex)) die('WALLET_SEED in .env is not hex');
-    return { seedHex, generated: false };
-  }
-  // generateRandomSeed() is 32 bytes of CSPRNG output. Bound to a local, written
-  // straight to disk, never returned to a logger.
-  seedHex = Buffer.from(generateRandomSeed()).toString('hex');
-  const existing = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8') : '';
-  const body = existing && !existing.endsWith('\n') ? existing + '\n' : existing;
-  writeFileSync(ENV_PATH, `${body}WALLET_SEED=${seedHex}\n`, { mode: 0o600 });
-  chmodSync(ENV_PATH, 0o600);
-  return { seedHex, generated: true };
+  // generateRandomSeed() is 32 bytes of CSPRNG output, written straight to
+  // disk and never returned to a logger.
+  const { value: seedHex, generated } = ensureEnvSecret('WALLET_SEED', () =>
+    Buffer.from(generateRandomSeed()).toString('hex'),
+  );
+  if (!/^[0-9a-f]+$/i.test(seedHex)) die('WALLET_SEED in .env is not hex');
+  return { seedHex, generated };
 };
 
 /** Derive the Zswap / NightExternal / Dust role keys for account 0, index 0. */

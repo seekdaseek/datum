@@ -1,7 +1,20 @@
 node_modules/
 build/
 dist/
-.env
 .DS_Store
+
+# Secrets. .env holds WALLET_SEED and PRIVATE_STATE_PASSWORD.
+.env
+.env.*
+!.env.example
+
+# Local private-state stores and signing-key stores. These hold the contract's
+# private state and its maintenance authority signing key. Patterns cover any
+# level-db-shaped directory, at any depth, not just the one path that leaked.
 midnight-level-db/
+**/midnight-level-db/
+*level-db/
+**/*level-db/
+*-leveldb/
+**/*-leveldb/
 *.ldb

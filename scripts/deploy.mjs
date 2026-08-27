@@ -33,7 +33,7 @@ import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-j
 
 import { resolve } from 'node:path';
 import { applyNetwork } from './config.mjs';
-import { ensureSeed, deriveKeys, unshieldedKeystoreFor, ROOT, die } from './seed.mjs';
+import { ensureSeed, ensureStorePassword, deriveKeys, unshieldedKeystoreFor, ROOT, die } from './seed.mjs';
 
 import { Contract } from '../build/datum-full/contract/index.js';
 
@@ -178,7 +178,9 @@ const buildProviders = (ctx) => {
     privateStateProvider: levelPrivateStateProvider({
       privateStateStoreName: 'datum-private-state',
       signingKeyStoreName: 'datum-signing-keys',
-      privateStoragePasswordProvider: () => 'Datum-Local-Deploy-2026',
+      // Read from .env, generated on first use. A hardcoded password here would
+      // make the store's encryption worthless the moment the repo is public.
+      privateStoragePasswordProvider: () => ensureStorePassword().value,
       accountId: ctx.unshieldedKeystore.getBech32Address().asString(),
     }),
     publicDataProvider: indexerPublicDataProvider(NET.indexerHttp, NET.indexerWs),
