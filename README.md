@@ -177,36 +177,38 @@ Deployed and attested on a local Midnight stack from [midnight-local-dev](https:
 | Deliverable | Value |
 |---|---|
 | Network | `undeployed` (local Docker stack) |
-| **Contract address** | `3d47d56ec4e249dec84ef2147653b9d6f43569f1b825256094c1f3c9fddfb100` |
-| **Deploy tx hash** | `277d8b5fa8693aef15d3b622e3162c56ac2cb07b94a3343b561790df7086b894` |
-| Deploy block | 43 |
-| **Attest tx hash** | `3e7cc4e320c5eaaef54eb1cd1b614bf13ed03da4250627ae6ff5b543d5b973e5` |
-| Attest block | 79 |
+| **Contract address** | `64a99b83376d198af51cfb6fad7bfee9a963fb07623cb624682a49ca7ba5d5c0` |
+| **Deploy tx hash** | `6df0155818acf391ab243f058648a617b4eac7accbb6453b12e160f310b65d61` |
+| Deploy block | 35 |
+| **Attest tx hash** | `d6a25587c4b5bca305c9571dbeed843b5e034ccbdc854bc61b49d81f23a8914b` |
+| Attest block | 55 |
 | Attest status | `SucceedEntirely` |
 
 The attested book is the headline case: solvent at oracle marks, insolvent at realisable prices. The verdict that landed on chain is **`covered: false`**.
+
+This deployment's contract maintenance signing key has never been committed. An earlier local deployment's key did reach a commit; that chain was destroyed with `docker compose down -v`, retiring the key rather than rewriting published history. The private-state store password now comes from `.env` instead of source, and `.gitignore` matches level-db state directories by shape rather than by the one path that leaked.
 
 **The indexer query that proves it landed.** The `attest` entry point appears as a `ContractCall` at the contract's address:
 
 ```bash
 curl -s -X POST http://localhost:8088/api/v4/graphql \
   -H 'Content-Type: application/json' \
-  -d '{"query":"{ contractAction(address: \"3d47d56ec4e249dec84ef2147653b9d6f43569f1b825256094c1f3c9fddfb100\") { __typename address ... on ContractCall { entryPoint deploy { address } } transaction { hash block { height } } } }"}'
+  -d '{"query":"{ contractAction(address: \"64a99b83376d198af51cfb6fad7bfee9a963fb07623cb624682a49ca7ba5d5c0\") { __typename address ... on ContractCall { entryPoint deploy { address } } transaction { hash block { height } } } }"}'
 ```
 
 ```json
 {"data":{"contractAction":{
   "__typename":"ContractCall",
-  "address":"3d47d56ec4e249dec84ef2147653b9d6f43569f1b825256094c1f3c9fddfb100",
+  "address":"64a99b83376d198af51cfb6fad7bfee9a963fb07623cb624682a49ca7ba5d5c0",
   "entryPoint":"attest",
-  "deploy":{"address":"3d47d56ec4e249dec84ef2147653b9d6f43569f1b825256094c1f3c9fddfb100"},
-  "transaction":{"hash":"3e7cc4e320c5eaaef54eb1cd1b614bf13ed03da4250627ae6ff5b543d5b973e5","block":{"height":79}}}}}
+  "deploy":{"address":"64a99b83376d198af51cfb6fad7bfee9a963fb07623cb624682a49ca7ba5d5c0"},
+  "transaction":{"hash":"d6a25587c4b5bca305c9571dbeed843b5e034ccbdc854bc61b49d81f23a8914b","block":{"height":55}}}}}
 ```
 
 `scripts/verify.mjs` reads the published state back using only the indexer — no wallet, no seed, no private input, which is exactly what a third party can do:
 
 ```bash
-node scripts/verify.mjs --network undeployed --address 3d47d56e…
+node scripts/verify.mjs --network undeployed --address 64a99b83…
 ```
 
 ```
@@ -236,6 +238,24 @@ mn_addr_preview1n2cuarawfep4s693f85qdhnej00u3jkumd3ye00zpea9pa2rl62sqtrt3l
 ```
 
 Moving there is a one-word change — `--network preview` — because every network-dependent value lives in `scripts/config.mjs`.
+
+### PREPROD — verified compatible, address ready
+
+Preprod runs the same ledger-8 stack as Preview, confirmed against the live chain rather than assumed:
+
+```bash
+curl -s -X POST https://rpc.preprod.midnight.network -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"system_version","params":[]}'
+# {"jsonrpc":"2.0","id":1,"result":"1.0.2-eb71e64e"}
+```
+
+Node `1.0.2` matches the Preprod row of the compatibility matrix exactly: on-chain runtime 3.0.0, Compact toolchain 0.31.1, runtime 0.16.0, Midnight.js 4.1.1, proof server 8.1.0 — identical to Preview. This contract deploys there unchanged.
+
+```
+mn_addr_preprod1n2cuarawfep4s693f85qdhnej00u3jkumd3ye00zpea9pa2rl62sq2amzz
+```
+
+One seed serves every network; only the address encoding differs, so the same wallet is addressable on `undeployed`, `preview` and `preprod`.
 
 ### Reproducing the local deployment
 
