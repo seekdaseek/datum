@@ -201,9 +201,38 @@ const main = async () => {
   const ctx = await buildWallet();
   log(`address: ${ctx.unshieldedKeystore.getBech32Address().asString()}`);
 
+  // Report sync progress rather than blocking silently. On a public network the
+  // wallet has millions of blocks to walk, and a silent wait is indistinguishable
+  // from a hang.
+  const progressSub = ctx.wallet.state().subscribe((st) => {
+    // FacadeState has no top-level syncProgress. Each sub-wallet carries its
+    // own SyncProgressData { appliedIndex, highestIndex, highestRelevantIndex,
+    // highestRelevantWalletIndex, isConnected }, and isSynced is the roll-up.
+    const part = (name, ws) => {
+      const p = ws?.syncProgress;
+      if (!p) return `${name}=?`;
+      const a = Number(p.appliedIndex ?? 0);
+      const h = Number(p.highestIndex ?? 0);
+      return `${name}=${h > 0 ? ((a / h) * 100).toFixed(1) : '0.0'}%`;
+    };
+    process.stderr.write(
+      `\r  sync ${part('unshielded', st.unshielded)} ${part('shielded', st.shielded)} ${part('dust', st.dust)} isSynced=${st.isSynced}      `,
+    );
+  });
+
   const synced = await ctx.wallet.waitForSyncedState();
+  progressSub.unsubscribe();
+  process.stderr.write('\n');
+
   const night = synced.unshielded.balances[unshieldedToken().raw] ?? 0n;
   log(`NIGHT balance: ${night}`);
+  if (process.argv.includes('--balance-only')) {
+    log(`DUST balance : ${synced.dust.balance(new Date())}`);
+    const unreg = synced.unshielded.availableCoins.filter((c) => c.meta?.registeredForDustGeneration !== true);
+    log(`unregistered NIGHT UTXOs: ${unreg.length}`);
+    await ctx.wallet.close?.();
+    process.exit(night > 0n ? 0 : 1);
+  }
   if (night === 0n) die('wallet holds no NIGHT — fund it before deploying');
 
   await registerDustIfNeeded(ctx);

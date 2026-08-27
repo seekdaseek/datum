@@ -223,21 +223,30 @@ venuesHash recomputed from the published venue array: MATCHES
 
 That `bookCommitment` is byte-identical to the one the simulation tests produce for the same book, so the on-chain artefact and the local test fixture agree.
 
-### PREVIEW deployment (public network) — PENDING
+### PREVIEW deployment (public network) — BLOCKED, faucet down
 
 | Deliverable | Value |
 |---|---|
-| Contract address | *pending — faucet outage* |
-| Transaction hash | *pending — faucet outage* |
-| Indexer query | *pending — faucet outage* |
+| Contract address | *not deployed — faucet outage* |
+| Transaction hash | *not deployed — faucet outage* |
+| Indexer query | *not deployed — faucet outage* |
 
-Blocked on funding, not on code. The Preview faucet at <https://midnight-tmnight-preview.nethermind.dev/> is returning a backend outage; the page loads and the service does not answer. The wallet address is derived and waiting:
+Blocked on funding, not on code. The Preview faucet self-reports the failure:
+
+```bash
+curl -s https://midnight-tmnight-preview.nethermind.dev/api/health
+```
+```json
+{"status":"NOT_SERVING","reason":"SYNC_STUCK_RECOVERY","needsRestart":true}
+```
+
+HTTP 503. The faucet's own wallet is stuck in sync recovery and the service asks for a restart, which needs the operator — retrying the captcha would fail and consume a rate-limited attempt. The Preprod faucet answers `{"status":"ok","details":{"faucet-wallet":"ok"}}` on the same path, which is why the public deployment target is Preprod. The Preview wallet address is derived and waiting:
 
 ```
 mn_addr_preview1n2cuarawfep4s693f85qdhnej00u3jkumd3ye00zpea9pa2rl62sqtrt3l
 ```
 
-Moving there is a one-word change — `--network preview` — because every network-dependent value lives in `scripts/config.mjs`.
+Moving there once the faucet recovers is a one-word change — `--network preview` — because every network-dependent value lives in `scripts/config.mjs`.
 
 ### PREPROD — verified compatible, address ready
 
