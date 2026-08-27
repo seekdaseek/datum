@@ -140,10 +140,78 @@ One book, one pool, one required ratio of 120%. The book is 500,000 collateral a
 
 The rest covers the solvent path, the venue digest round-trip, zero-padding smuggling, degenerate reserves in both active and padding slots, over- and under-claimed proceeds, the accumulator width at the 2^64 boundary on both the public and witness sides, and commitment binding over positions, debt and nonce independently.
 
+## Proving-key generation, measured
+
+The dev loop uses `--skip-zk`. These are the numbers for the real thing, with proving keys, measured on the machine below rather than estimated.
+
+```bash
+compact compile contract/src/datum.compact build/datum-full
+```
+
+**Host:** Apple M2, 8 cores, 8 GB RAM, macOS 25.5.0.
+
+| Run | Wall clock | Peak RSS | Swaps |
+|---|---|---|---|
+| 1 (cold) | 13.46 s | 400.7 MiB | 0 |
+| 2 | 11.01 s | 406.1 MiB | 0 |
+| 3 | 10.86 s | 419.2 MiB | 0 |
+
+Peak RSS is `maximum resident set size` from `/usr/bin/time -l`, cross-checked against a 2-second sampler summing RSS across every `compactc`/`zkir` process, which peaked at 383 MiB. Zero swap events on an 8 GB machine — key generation for this circuit is not memory-bound and needs no headroom management.
+
+Generated artefacts:
+
+| File | Bytes |
+|---|---|
+| `keys/attest.prover` | 9,970,294 |
+| `keys/attest.verifier` | 2,119 |
+| `zkir/attest.zkir` | 19,862 |
+| `zkir/attest.bzkir` | 1,272 |
+| `contract/index.js` | 42,499 |
+| `contract/index.d.ts` | 2,571 |
+| `contract/index.js.map` | 2,214 |
+| `compiler/contract-info.json` | 6,103 |
+| `compiler/contract-manifest.json` | 1,521 |
+| **Total** | **~10 MB** |
+
+One circuit is proved — `attest`. `venueDigest` is `pure`, so it compiles to no ZK circuit at all and costs nothing here.
+
+**Key generation is deterministic.** Three independent compiles into three separate directories produced byte-identical keys:
+
+```
+a1789f2a1809a9fa8b54818ab6dca090…  attest.prover   (all 3 runs)
+ccc85e1495d7a5e72e9aff09cfe89cb4…  attest.verifier (all 3 runs)
+```
+
+So a reviewer can regenerate the keys and compare hashes against the `contract-manifest.json` in this repo rather than taking anyone's word for the artefact.
+
+**`--skip-zk` is a faithful dev loop.** The only difference in generated JavaScript between a `--skip-zk` build and a full build is the `expectedVk` constant, empty in the former and carrying the verifier key hash in the latter:
+
+```diff
+-export const expectedVk = {};
++export const expectedVk = {
++  'attest': '…',
++};
+```
+
+Nothing else differs. The 22 tests pass identically against both builds.
+
+## Reading `requiredRatio`
+
+`requiredRatio` is public, it is written to the ledger, and **a verifier must read it — the verdict is meaningless without it.** `covered: true` does not mean "solvent." It means "cleared the bar that this attestation declared," and the attestation declares its own bar.
+
+The contract asserts only that the ratio is positive. It deliberately imposes no floor, because a sub-100% requirement is a legitimate configuration — a book backed by other collateral, or a tranche where partial coverage is the designed state.
+
+That freedom is exactly why the number must be read. A worked example:
+
+> `requiredRatio: 800000` is 800000 / 1000000 = **0.8**, an 80% requirement. A book publishing `covered: true` at this ratio is asserting that its realisable proceeds reach **80% of its debt** — that is, it is attesting to being **20% short**, and doing so truthfully. The verdict bit is `true` and the book is under water. Both statements are correct at once.
+
+Reading the flag without the ratio is a category error. Anything below `RATIO_SCALE` (1000000) is a sub-collateralised attestation and any interface displaying the verdict must display the ratio beside it and mark that case as such.
+
 ## How a judge tests this
 
 1. `compact compile --skip-zk contract/src/datum.compact build/datum` — must exit 0.
 2. `npm install && npm test` — 22 tests, all passing.
-3. Read the headline test first. It is the product in twenty lines.
-4. Read the `for` loop in [`contract/src/datum.compact`](contract/src/datum.compact). The two positivity asserts and the cross-multiplied inequality are the whole soundness argument, and the tests that break them are named after them.
-5. Grep the contract for `disclose(`. There are six. Each carries a one-line justification directly above it. Four are public inputs going back out. Two are derived from private data — the hiding book commitment and the one-bit verdict — and both are the intended output of the attestation.
+3. Optionally `compact compile contract/src/datum.compact build/datum-full` for the real proving keys — ~11 s and ~400 MiB on an 8 GB M2. Compare the key hashes against the table above.
+4. Read the headline test first. It is the product in twenty lines.
+5. Read the `for` loop in [`contract/src/datum.compact`](contract/src/datum.compact). The two positivity asserts and the cross-multiplied inequality are the whole soundness argument, and the tests that break them are named after them.
+6. Grep the contract for `disclose(`. There are six. Each carries a one-line justification directly above it. Four are public inputs going back out. Two are derived from private data — the hiding book commitment and the one-bit verdict — and both are the intended output of the attestation.
