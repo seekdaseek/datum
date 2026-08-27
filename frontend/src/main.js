@@ -118,11 +118,33 @@ const render = (net, data, contractLib) => {
   // ---- the gap ------------------------------------------------------------
   const gapCard = el('section', 'card gapcard');
   gapCard.append(el('h2', null, 'Why marks lie'));
+
+  // The distinction between "a size you chose" and "the attested book" IS the
+  // product. It is stated before the numbers, at the same visual weight as the
+  // numbers, not as a caption underneath them.
+  const banner = el('div', 'privacy-banner');
+  const bTop = el('div', 'pb-top');
+  bTop.append(el('span', 'pb-chip', 'NOT THE ATTESTED BOOK'));
+  bTop.append(el('span', 'pb-head', 'These are hypothetical figures for a size you choose.'));
+  banner.append(bTop);
+  const bBody = el('p', 'pb-body');
+  bBody.append(
+    document.createTextNode('They are computed from the venue reserves published on chain below. The attested book’s '),
+  );
+  bBody.append(el('strong', null, 'position sizes, debt and claimed proceeds are private'));
+  bBody.append(
+    document.createTextNode(
+      ' — they are never published, are not in public state, and appear nowhere on this page or in this bundle. Nobody can derive the book’s own marked or realisable value from the chain. That is the point of the contract.',
+    ),
+  );
+  banner.append(bBody);
+  gapCard.append(banner);
+
   gapCard.append(
     el(
       'p',
       'lede',
-      'Selling into a pool moves the price against you. These figures come only from the venue reserves published on chain below — drag to see the gap at any exit size.',
+      'Selling into a pool moves the price against you. Drag to see the gap at any exit size.',
     ),
   );
 
@@ -140,6 +162,9 @@ const render = (net, data, contractLib) => {
   cmp.append(leftCol, gapCol, rightCol);
 
   const sizeLine = el('p', 'sizeline');
+  const sizeChip = el('span', 'hypo-chip', 'HYPOTHETICAL');
+  const sizeText = el('span', 'sizetext');
+  sizeLine.append(sizeChip, sizeText);
 
   const paint = () => {
     const pct = BigInt(slider.value);
@@ -150,12 +175,12 @@ const render = (net, data, contractLib) => {
     const gapPct = m === 0n ? 0 : (Number(gap) / Number(m)) * 100;
 
     leftCol.innerHTML = '';
-    leftCol.append(el('div', 'collabel', 'At oracle marks'));
+    leftCol.append(el('div', 'collabel', 'At oracle marks · hypothetical size'));
     leftCol.append(el('div', 'bignum', fromMicro(m)));
     leftCol.append(el('div', 'colsub', 'size × spot price'));
 
     rightCol.innerHTML = '';
-    rightCol.append(el('div', 'collabel', 'Realisable'));
+    rightCol.append(el('div', 'collabel', 'Realisable · hypothetical size'));
     rightCol.append(el('div', 'bignum', fromMicro(r)));
     rightCol.append(el('div', 'colsub', 'sold into published depth'));
 
@@ -164,18 +189,11 @@ const render = (net, data, contractLib) => {
     gapCol.append(el('div', 'bignum neg', `−${fromMicro(gap)}`));
     gapCol.append(el('div', 'colsub', `${gapPct.toFixed(1)}% of the marked value is not there`));
 
-    sizeLine.textContent = `Exit size: ${pct}% of pool reserves (${fromMicro(q)} units)`;
+    sizeText.textContent = ` Exit size: ${pct}% of pool reserves (${fromMicro(q)} units) — chosen here, not read from the book`;
   };
   slider.addEventListener('input', paint);
 
   gapCard.append(sizeLine, slider, cmp);
-  gapCard.append(
-    el(
-      'p',
-      'privacy-note',
-      'The attested book’s actual position sizes, its debt, and its claimed proceeds are private. They are not in public state and are not shown here — that is the point of the contract. The curve above is the published venue depth, not the book.',
-    ),
-  );
   app.append(gapCard);
 
   // ---- verdict ------------------------------------------------------------

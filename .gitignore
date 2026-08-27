@@ -19,3 +19,4 @@ midnight-level-db/
 **/*-leveldb/
 *.ldb
 frontend-dist/
+docs/screenshots/

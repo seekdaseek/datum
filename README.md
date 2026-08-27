@@ -384,11 +384,35 @@ Everything on screen is read from chain or derived from values on chain:
 
 Position sizes, debt and claimed proceeds are **not shown and not implied**. They are not in public state, and the page says so where a reader would otherwise assume the comparison is the book's.
 
-### One honest caveat about the headline comparison
+### The headline comparison is a hypothetical size, and the page says so loudly
 
-The marked-versus-realisable figures are computed for a **hypothetical exit size against the published reserves**, not for the attested book. They cannot be the book's: position size `q` is a private witness, so neither the marked value `q × Y/X` nor the realisable value `Y·q/(X+q)` is derivable from public state by anyone, including this page.
+The marked-versus-realisable figures are computed for an **exit size the reader chooses**, against the reserves published on chain. They are **not the attested book's numbers**, and they cannot be: position size `q` is a private witness, so neither the marked value `q × Y/X` nor the realisable value `Y·q/(X+q)` is derivable from public state — by this page or by anyone else.
 
-Showing the book's own numbers would require either publishing `q` — which defeats the contract — or inventing them, which would be fabricated data on a page whose entire claim is verifiability. So the page shows the mechanism using the real published depth, labels the exit size explicitly, and states in the layout that the book's actual size is private. At 50% of pool reserves the curve happens to reproduce the headline case exactly: 25,000,000 marked against 16,666,666 realisable, a 33.3% overstatement.
+Showing the book's own figures would require either publishing `q`, which defeats the contract, or inventing them, which would be fabricated data on a page whose entire claim is verifiability. Neither is acceptable, so the page shows the mechanism using the real published depth and makes the distinction impossible to miss:
+
+- a full-width banner **above** the numbers, at the same visual weight as the numbers, headed **NOT THE ATTESTED BOOK** — *"These are hypothetical figures for a size you choose"*
+- a **HYPOTHETICAL** chip on the size line, which reads *"chosen here, not read from the book"*
+- both value columns labelled **"· hypothetical size"**, so the framing travels with the numbers if the banner scrolls away
+
+That distinction is the product, not a disclaimer about it. A book whose size is public is a book with no privacy left to prove.
+
+At 50% of pool reserves the curve happens to reproduce the headline case exactly: 25,000,000 marked against 16,666,666 realisable, a 33.3% overstatement — the same book the tests use, arrived at from public data alone.
+
+### Deck screenshots
+
+Regenerable from the real page rather than hand-captured, so they cannot drift from what the page renders:
+
+```bash
+npm run build:web && npm run screenshots
+```
+
+Serves `frontend-dist/` on an ephemeral port, waits for the verify indicator to resolve to a real verdict rather than capturing the pending state, and writes three element-clipped PNGs at 2× into `docs/screenshots/` (gitignored — the script is the artifact):
+
+| File | Contents |
+|---|---|
+| `1-headline-comparison.png` | the gap, with the NOT-THE-ATTESTED-BOOK banner always in frame |
+| `2-verify-match.png` | provenance plus the client-side `venuesHash` recompute reading MATCHES |
+| `3-venue-array.png` | the published venue state, all eight slots |
 
 ### The Verify button
 
