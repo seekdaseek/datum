@@ -174,7 +174,9 @@ Three targets. Read the labels — one is a public network anyone can query, one
 
 Deployed and attested on **Midnight Preprod**, the public test network closest to mainnet.
 
-**Live page: <https://datum-9ib.pages.dev>** — reads the attestation below straight from the public indexer. No wallet, no install, no setup.
+**Live page: <https://datum.ochinimus.app>** — reads the attestation below straight from the public indexer. No wallet, no install, no setup.
+
+Mirror: <https://datum-9ib.pages.dev> — the same deployment on its `pages.dev` hostname. Both serve a byte-identical bundle; use the mirror if the custom domain's certificate ever misbehaves.
 
 | Deliverable | Value |
 |---|---|
@@ -186,7 +188,8 @@ Deployed and attested on **Midnight Preprod**, the public test network closest t
 | Attest block | 2295258 |
 | Attest status | `SucceedEntirely` |
 | Verdict on chain | **`covered: false`** |
-| Live frontend | <https://datum-9ib.pages.dev> (Cloudflare Pages) |
+| Live frontend | <https://datum.ochinimus.app> (Cloudflare Pages) |
+| Frontend mirror | <https://datum-9ib.pages.dev> (same deployment, fallback hostname) |
 
 The attested book is the headline case: solvent at oracle marks, insolvent at realisable prices.
 
@@ -562,7 +565,7 @@ Reading the flag without the ratio is a category error. Anything below `RATIO_SC
 
 ## How a judge tests this
 
-0. Open <https://datum-9ib.pages.dev> — the live attestation, read from the public indexer in the browser. Press **Verify from chain** to recompute `venuesHash` client-side.
+0. Open <https://datum.ochinimus.app> — the live attestation, read from the public indexer in the browser. Press **Verify from chain** to recompute `venuesHash` client-side. (Mirror, if needed: <https://datum-9ib.pages.dev>.)
 
    Or query it directly — no install, no wallet, one command:
 
