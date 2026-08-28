@@ -450,6 +450,30 @@ Serves `frontend-dist/` on an ephemeral port, waits for the verify indicator to 
 | `2-verify-match.png` | provenance plus the client-side `venuesHash` recompute reading MATCHES |
 | `3-venue-array.png` | the published venue state, all eight slots |
 
+### The interactive gap: two verdicts, never confusable
+
+The reader drives the panel with two sliders — **exit size** and **debt to cover** — and both hypothetical verdicts recompute live in the browser, using the venue reserves and `requiredRatio` read from the contract. Everything is arithmetic on values already fetched: no extra indexer call per drag, no new dependency.
+
+The comparison it makes visible is the product:
+
+| size / debt | At oracle marks | At realisable price |
+|---|---|---|
+| 50% / 18m | **WOULD BE COVERED** — 1.39× | **WOULD NOT BE COVERED** — 0.93× |
+| 50% / 10m | WOULD BE COVERED — 2.50× | WOULD BE COVERED — 1.67× |
+| 50% / 26m | WOULD NOT BE COVERED — 0.96× | WOULD NOT BE COVERED — 0.64× |
+
+The default lands in the band where the mark clears the bar and the realisable price does not. A reader can drag out of that band in either direction, which is the point — the gap is a property of depth and size, not a rigged example.
+
+The page uses **the contract's own inequality**, not a paraphrase of it:
+
+```
+proceeds * RATIO_SCALE >= debt * requiredRatio
+```
+
+**Why the reader supplies the debt.** A collateral ratio needs a debt, and the attested book's debt is a private witness — not on chain, not derivable, and deliberately absent from this page. So the reader chooses one. Its default is **18,000,000, which is not the attested book's debt**; picking the real figure as a default would have put the book's debt on screen directly beneath a banner promising it is private.
+
+**Two verdicts on one page, made unmistakable.** The interactive one lives inside the hypothetical card, behind a dashed border, under a `HYPOTHETICAL VERDICT` chip in the same accent blue as the inputs that drive it, captioned *"If your numbers were the book — computed here in your browser, never attested"*. The attested one is a separate, larger, filled card labelled **`ON-CHAIN VERDICT · READ FROM THE CONTRACT · DOES NOT CHANGE`**, and it does not move when the sliders do. Different container, different border, different size, different label, different behaviour.
+
 ### The Verify button
 
 One control that re-runs verification client-side: refetch the contract state from the indexer, recompute `venuesHash` over the published venue array using the contract's own `venueDigest` pure circuit, compare, and report. It is the product's claim made interactive — a reader checks it rather than trusting the page.

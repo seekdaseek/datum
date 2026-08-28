@@ -155,6 +155,19 @@ const render = (net, data, contractLib) => {
   slider.value = '50';
   slider.setAttribute('aria-label', 'Exit size as a percentage of pool reserves');
 
+  const hypoBox = el('div', 'hypobox');
+  const hypoHead = el('div', 'hypohead');
+  hypoHead.append(el('span', 'hypo-chip', 'HYPOTHETICAL VERDICT'));
+  hypoHead.append(el('span', 'hypohead-t', 'If your numbers were the book — computed here in your browser, never attested'));
+  hypoBox.append(hypoHead);
+  const hypoCols = el('div', 'hypocols');
+  const hypoMark = el('div', 'hcol');
+  const hypoReal = el('div', 'hcol');
+  hypoCols.append(hypoMark, hypoReal);
+  hypoBox.append(hypoCols);
+  const hypoNote = el('p', 'hyponote');
+  hypoBox.append(hypoNote);
+
   const cmp = el('div', 'cmp');
   const leftCol = el('div', 'col mark');
   const rightCol = el('div', 'col real');
@@ -162,12 +175,31 @@ const render = (net, data, contractLib) => {
   cmp.append(leftCol, gapCol, rightCol);
 
   const sizeLine = el('p', 'sizeline');
-  const sizeChip = el('span', 'hypo-chip', 'HYPOTHETICAL');
-  const sizeText = el('span', 'sizetext');
-  sizeLine.append(sizeChip, sizeText);
+  sizeLine.append(el('span', 'hypo-chip', 'HYPOTHETICAL'), (() => {
+    const t = el('span', 'sizetext');
+    sizeLine._text = t;
+    return t;
+  })());
+  const sizeText = sizeLine._text;
+
+  // A collateral ratio needs a debt, and the attested book's debt is a private
+  // witness — it is not on chain and this page must not imply it. So the reader
+  // supplies a debt too. Both inputs are the reader's; only the reserves and the
+  // required ratio come from the contract.
+  const debtLine = el('p', 'sizeline');
+  const debtText = el('span', 'sizetext');
+  debtLine.append(el('span', 'hypo-chip', 'HYPOTHETICAL'), debtText);
+  const debtSlider = el('input', 'slider');
+  debtSlider.type = 'range';
+  debtSlider.min = '1';
+  debtSlider.max = '30';
+  debtSlider.value = '18';
+  debtSlider.setAttribute('aria-label', 'Hypothetical debt in millions');
 
   const paint = () => {
     const pct = BigInt(slider.value);
+    const debtM = BigInt(debtSlider.value);
+    const debt = debtM * 1_000_000n * MICRO; // millions -> micro-units
     const q = (pool.reserveX * pct) / 100n;
     const m = marked(pool.reserveX, pool.reserveY, q);
     const r = realisable(pool.reserveX, pool.reserveY, q);
@@ -190,10 +222,37 @@ const render = (net, data, contractLib) => {
     gapCol.append(el('div', 'colsub', `${gapPct.toFixed(1)}% of the marked value is not there`));
 
     sizeText.textContent = ` Exit size: ${pct}% of pool reserves (${fromMicro(q)} units) — chosen here, not read from the book`;
+    debtText.textContent = ` Debt to cover: ${fromMicro(debt)} — chosen here; the attested book’s debt is private and is not this number`;
+
+    // Exactly the inequality the circuit enforces:
+    //   proceeds * RATIO_SCALE >= debt * requiredRatio
+    const clears = (value) => value * RATIO_SCALE >= debt * ratio;
+    const impliedX = (value) => (debt === 0n ? 0 : Number((value * RATIO_SCALE) / debt) / 1e6);
+
+    const paintCol = (col, label, value) => {
+      const ok = clears(value);
+      col.innerHTML = '';
+      col.className = `hcol ${ok ? 'pass' : 'fail'}`;
+      col.append(el('div', 'hlabel', label));
+      col.append(el('div', 'hverdict', ok ? 'WOULD BE COVERED' : 'WOULD NOT BE COVERED'));
+      col.append(el('div', 'hratio', `${impliedX(value).toFixed(2)}× vs ${(Number(ratio) / 1e6).toFixed(2)}× required`));
+    };
+    paintCol(hypoMark, 'Valued at oracle marks', m);
+    paintCol(hypoReal, 'Valued at realisable price', r);
+
+    const markOk = clears(m);
+    const realOk = clears(r);
+    hypoNote.textContent = markOk && !realOk
+      ? 'Same book, same bar. The mark clears it; the price you could actually sell at does not. This is the gap datum proves.'
+      : markOk && realOk
+        ? 'Both clear the bar at this size and debt. Raise the debt, or the exit size, to find where the mark starts lying.'
+        : 'Neither clears the bar at this size and debt. Lower the debt to find the band where the mark passes and the realisable price fails.';
+    hypoNote.className = `hyponote ${markOk && !realOk ? 'sting' : ''}`;
   };
   slider.addEventListener('input', paint);
+  debtSlider.addEventListener('input', paint);
 
-  gapCard.append(sizeLine, slider, cmp);
+  gapCard.append(sizeLine, slider, debtLine, debtSlider, cmp, hypoBox);
   app.append(gapCard);
 
   // ---- verdict ------------------------------------------------------------
@@ -201,7 +260,7 @@ const render = (net, data, contractLib) => {
   const subColl = ratio < RATIO_SCALE;
   const vCard = el('section', `card verdict ${L.covered ? 'ok' : 'bad'}`);
   const vLeft = el('div', 'vleft');
-  vLeft.append(el('div', 'vlabel', 'On-chain verdict'));
+  vLeft.append(el('div', 'vlabel', 'ON-CHAIN VERDICT · READ FROM THE CONTRACT · DOES NOT CHANGE'));
   vLeft.append(el('div', 'vbig', L.covered ? 'COVERED' : 'NOT COVERED'));
   vLeft.append(
     el(
