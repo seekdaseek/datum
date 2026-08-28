@@ -228,6 +228,41 @@ curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
   "transaction":{"hash":"b29dc307bb2c42541ffdf9e8e8836391873794d411a17b4ff070a56ea8ee64c5","block":{"height":2295258}}}}}
 ```
 
+### Transaction hash vs transaction identifier
+
+A Midnight transaction has **one hash** and **several identifiers**, and both are queryable. The scripts print both, which is worth explaining because they look interchangeable and are not.
+
+| | Deploy | Attest |
+|---|---|---|
+| **`hash`** (use this) | `e0bd90e0b26b890dd2488683ed778e22c55490054e3c1db5d9f45fc4caeb02b7` | `b29dc307bb2c42541ffdf9e8e8836391873794d411a17b4ff070a56ea8ee64c5` |
+| `identifiers[0]` | `00fd7c47e1d0c4a32853b10a5d0babdb844c54c710cd2189080895ab4fffacd061` | `0021dc8766335ff906ecf899b138f0610ebe58bf10b119a534d760e451e9f87794` |
+| `identifiers[1]` | `00aa704046aed16ba728d1e6d6bde27aa9c42f6785d20fffbffc1007ba8044206c` | `00114951453e0dbae86c7471ccea99c4e4da4ef118188fc5f5da11ae75a3dbb668` |
+
+Both resolve to the same transaction. Verified against the indexer, not inferred:
+
+```bash
+# by hash
+curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"{ transactions(offset:{hash:\"e0bd90e0b26b890dd2488683ed778e22c55490054e3c1db5d9f45fc4caeb02b7\"}) { hash block { height } ... on RegularTransaction { identifiers transactionResult { status } } contractActions { __typename address } } }"}'
+```
+
+```bash
+# by identifier — same transaction back
+curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"{ transactions(offset:{identifier:\"00aa704046aed16ba728d1e6d6bde27aa9c42f6785d20fffbffc1007ba8044206c\"}) { hash block { height } } }"}'
+```
+
+Both return `hash: e0bd90e0…02b7`, `block: 2293934`, `status: SUCCESS`, and the `ContractDeploy` at `8086d2e3…`.
+
+Two practical notes:
+
+- **`identifiers` is a field on `RegularTransaction`, not on the `Transaction` interface.** Querying it without an inline fragment fails with *"Unknown field \"identifiers\" on type \"Transaction\""*.
+- Midnight.js's `FinalizedTxData` exposes `txHash` (the hash), `identifiers` (all of them), and `txId` — whose own doc comment reads *"One of the transaction ID"*. `txId` is therefore **one arbitrary element of the identifier set**, not a distinct canonical id. `scripts/deploy.mjs` labels it accordingly.
+
+**This README quotes the `hash` everywhere a transaction is named**, because it is the single canonical value per transaction and the one block explorers key on. The identifiers are recorded here for completeness.
+
 ### The same commitment on three independent chains
 
 The `bookCommitment` published on Preprod is **byte-identical** to the one the simulation tests produce and the one the local chain published:

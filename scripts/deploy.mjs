@@ -281,7 +281,9 @@ const main = async () => {
     log('');
     log(`CONTRACT ADDRESS : ${deployed.deployTxData.public.contractAddress}`);
     log(`DEPLOY TX HASH   : ${deployed.deployTxData.public.txHash}`);
-    log(`DEPLOY TX ID     : ${deployed.deployTxData.public.txId}`);
+    // txId is ONE OF the transaction's identifiers, not a distinct canonical id.
+    // The hash above is the value to quote and to query with.
+    log(`DEPLOY TX IDENT  : ${deployed.deployTxData.public.txId}  (one of several identifiers)`);
     log(`DEPLOY BLOCK     : ${deployed.deployTxData.public.blockHeight}`);
   }
 
@@ -296,13 +298,13 @@ const main = async () => {
   log('calling attest...');
   const called = await deployed.callTx.attest(VENUES, RATIO, BigInt(Math.floor(Date.now() / 1000)));
   const attestTxHash = called.public.txHash;
-  const attestTxId = called.public.txId;
+  const attestTxIdent = called.public.txId;
   const attestBlock = called.public.blockHeight;
   const attestStatus = called.public.status;
 
   log('');
   log(`ATTEST TX HASH   : ${attestTxHash}`);
-  log(`ATTEST TX ID     : ${attestTxId}`);
+  log(`ATTEST TX IDENT  : ${attestTxIdent}  (one of several identifiers)`);
   log(`ATTEST BLOCK     : ${attestBlock}`);
   log(`ATTEST STATUS    : ${attestStatus}`);
 
