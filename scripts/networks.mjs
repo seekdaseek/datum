@@ -52,7 +52,7 @@ export const NETWORKS = {
     addressPrefix: 'mn_addr_preprod',
     faucet: 'https://midnight-tmnight-preprod.nethermind.dev/',
     explorer: 'https://preprod.midnightexplorer.com/',
-    contract: null, // set when the preprod deploy lands
+    contract: '8086d2e3db45c9eb2a45b58796202d8e076e04c49e03142db36a98815bb30a05',
     public: true,
   },
 };

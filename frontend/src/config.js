@@ -9,7 +9,7 @@ import { NETWORKS, RATIO_SCALE, SLOTS } from '../../scripts/networks.mjs';
 
 // Which network the deployed page targets by default. Flip this one string to
 // repoint the whole app.
-export const DEFAULT_NETWORK = 'undeployed';
+export const DEFAULT_NETWORK = 'preprod';
 
 export const resolveNetwork = () => {
   const requested =

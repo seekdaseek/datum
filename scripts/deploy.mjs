@@ -208,12 +208,15 @@ const main = async () => {
     // FacadeState has no top-level syncProgress. Each sub-wallet carries its
     // own SyncProgressData { appliedIndex, highestIndex, highestRelevantIndex,
     // highestRelevantWalletIndex, isConnected }, and isSynced is the roll-up.
+    // The accessor is `progress`, not `syncProgress`, and it returns
+    // SyncProgressData { appliedIndex, highestIndex, highestRelevantIndex,
+    // highestRelevantWalletIndex, isConnected } — all bigint except isConnected.
     const part = (name, ws) => {
-      const p = ws?.syncProgress;
+      const p = ws?.progress ?? ws?.syncProgress;
       if (!p) return `${name}=?`;
-      const a = Number(p.appliedIndex ?? 0);
-      const h = Number(p.highestIndex ?? 0);
-      return `${name}=${h > 0 ? ((a / h) * 100).toFixed(1) : '0.0'}%`;
+      const a = Number(p.appliedIndex ?? 0n);
+      const h = Number(p.highestIndex ?? 0n);
+      return `${name}=${h > 0 ? ((a / h) * 100).toFixed(1) : '0.0'}% (${a}/${h})`;
     };
     process.stderr.write(
       `\r  sync ${part('unshielded', st.unshielded)} ${part('shielded', st.shielded)} ${part('dust', st.dust)} isSynced=${st.isSynced}      `,

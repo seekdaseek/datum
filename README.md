@@ -168,70 +168,120 @@ Same keys, same hashes — see above.
 
 ## Deployment
 
-Two targets. Read the labels — one is a real public network, the other is a local chain on a laptop.
+Three targets. Read the labels — one is a public network anyone can query, one is a local chain on a laptop, one is blocked.
 
-### LOCAL deployment (network `undeployed`) — DONE
+### PREPROD — public network, LIVE
 
-Deployed and attested on a local Midnight stack from [midnight-local-dev](https://github.com/midnightntwrk/midnight-local-dev): a real node, a real indexer and a real proof server in Docker. **This is a local chain, not a public one.** The address below is not reachable by anyone else and proves the software works end to end, nothing more.
+Deployed and attested on **Midnight Preprod**, the public test network closest to mainnet.
 
 | Deliverable | Value |
 |---|---|
-| Network | `undeployed` (local Docker stack) |
-| **Contract address** | `64a99b83376d198af51cfb6fad7bfee9a963fb07623cb624682a49ca7ba5d5c0` |
-| **Deploy tx hash** | `6df0155818acf391ab243f058648a617b4eac7accbb6453b12e160f310b65d61` |
-| Deploy block | 35 |
-| **Attest tx hash** | `d6a25587c4b5bca305c9571dbeed843b5e034ccbdc854bc61b49d81f23a8914b` |
-| Attest block | 55 |
+| Network | `preprod` (public) |
+| **Contract address** | `8086d2e3db45c9eb2a45b58796202d8e076e04c49e03142db36a98815bb30a05` |
+| **Deploy tx hash** | `e0bd90e0b26b890dd2488683ed778e22c55490054e3c1db5d9f45fc4caeb02b7` |
+| Deploy block | 2293934 |
+| **Attest tx hash** | `b29dc307bb2c42541ffdf9e8e8836391873794d411a17b4ff070a56ea8ee64c5` |
+| Attest block | 2295258 |
 | Attest status | `SucceedEntirely` |
+| Verdict on chain | **`covered: false`** |
 
-The attested book is the headline case: solvent at oracle marks, insolvent at realisable prices. The verdict that landed on chain is **`covered: false`**.
+The attested book is the headline case: solvent at oracle marks, insolvent at realisable prices.
 
-This deployment's contract maintenance signing key has never been committed. An earlier local deployment's key did reach a commit; that chain was destroyed with `docker compose down -v`, retiring the key rather than rewriting published history. The private-state store password now comes from `.env` instead of source, and `.gitignore` matches level-db state directories by shape rather than by the one path that leaked.
-
-**The indexer query that proves it landed.** The `attest` entry point appears as a `ContractCall` at the contract's address:
-
-```bash
-curl -s -X POST http://localhost:8088/api/v4/graphql \
-  -H 'Content-Type: application/json' \
-  -d '{"query":"{ contractAction(address: \"64a99b83376d198af51cfb6fad7bfee9a963fb07623cb624682a49ca7ba5d5c0\") { __typename address ... on ContractCall { entryPoint deploy { address } } transaction { hash block { height } } } }"}'
-```
-
-```json
-{"data":{"contractAction":{
-  "__typename":"ContractCall",
-  "address":"64a99b83376d198af51cfb6fad7bfee9a963fb07623cb624682a49ca7ba5d5c0",
-  "entryPoint":"attest",
-  "deploy":{"address":"64a99b83376d198af51cfb6fad7bfee9a963fb07623cb624682a49ca7ba5d5c0"},
-  "transaction":{"hash":"d6a25587c4b5bca305c9571dbeed843b5e034ccbdc854bc61b49d81f23a8914b","block":{"height":55}}}}}
-```
-
-`scripts/verify.mjs` reads the published state back using only the indexer — no wallet, no seed, no private input, which is exactly what a third party can do:
+**The verify command** — public data only, no wallet, no key:
 
 ```bash
-node scripts/verify.mjs --network undeployed --address 64a99b83…
+node scripts/verify.mjs --network preprod \
+  --address 8086d2e3db45c9eb2a45b58796202d8e076e04c49e03142db36a98815bb30a05
 ```
 
 ```
 attestationCount : 1
 covered          : false   <-- the verdict
 requiredRatio    : 1200000  (= 1.2x)
+attestedAt       : 1787884105  (2026-08-28T02:28:25.000Z)
 bookCommitment   : 1543fcb5bc18069ab4d0715dda68dfe09702360353fc4a87d32104ad29a90c74
 venuesHash       : e8c1c5e2de006d6082c4a6c50e2ea36d4545129de135551bcfdb875094b465c7
 
 venuesHash recomputed from the published venue array: MATCHES
 ```
 
-That `bookCommitment` is byte-identical to the one the simulation tests produce for the same book, so the on-chain artefact and the local test fixture agree.
+**The indexer query that proves the attestation landed** — anyone can run this:
 
-### PREVIEW deployment (public network) — BLOCKED, faucet down
+```bash
+curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"{ contractAction(address: \"8086d2e3db45c9eb2a45b58796202d8e076e04c49e03142db36a98815bb30a05\") { __typename address ... on ContractCall { entryPoint deploy { address } } transaction { hash block { height } } } }"}'
+```
+
+```json
+{"data":{"contractAction":{
+  "__typename":"ContractCall",
+  "address":"8086d2e3db45c9eb2a45b58796202d8e076e04c49e03142db36a98815bb30a05",
+  "entryPoint":"attest",
+  "deploy":{"address":"8086d2e3db45c9eb2a45b58796202d8e076e04c49e03142db36a98815bb30a05"},
+  "transaction":{"hash":"b29dc307bb2c42541ffdf9e8e8836391873794d411a17b4ff070a56ea8ee64c5","block":{"height":2295258}}}}}
+```
+
+### The same commitment on three independent chains
+
+The `bookCommitment` published on Preprod is **byte-identical** to the one the simulation tests produce and the one the local chain published:
+
+```
+1543fcb5bc18069ab4d0715dda68dfe09702360353fc4a87d32104ad29a90c74
+```
+
+| Where | bookCommitment |
+|---|---|
+| Simulation tests (`npm test`) | `1543fcb5…0c74` |
+| Local `undeployed` chain | `1543fcb5…0c74` |
+| **Public Preprod** | `1543fcb5…0c74` |
+
+That is the binding property demonstrated rather than asserted. The same book under the same nonce commits to the same value regardless of which chain it lands on, and a different debt, a different position, or a different nonce would change it — which the test suite proves independently by changing each one in isolation.
+
+### Wallet sync is the dominant cost, measured
+
+| | Wallet sync to usable state |
+|---|---|
+| Local `undeployed` chain | **~20 seconds** |
+| Public Preprod, deploy run | **1h 55m** |
+| Public Preprod, attest run | **2h 11m** |
+
+Roughly **350×**, CPU-bound at ~95–105% of one core across 2.29M blocks. Midnight's wallet SDK holds sync state in memory only — a restarted process re-syncs from genesis — so deploy and attest each paid the cost in full.
+
+This is the empirical justification for the [read-only frontend](#the-frontend): a wallet-gated page spends that budget before it renders. It is also a practical note for anyone building here — batch every write into one process, because splitting them doubles the wait.
+
+### LOCAL deployment (network `undeployed`)
+
+Kept for reproducibility. **A local chain, not a public one** — this address is not reachable by anyone else.
+
+| Deliverable | Value |
+|---|---|
+| Contract address | `64a99b83376d198af51cfb6fad7bfee9a963fb07623cb624682a49ca7ba5d5c0` |
+| Deploy tx hash | `6df0155818acf391ab243f058648a617b4eac7accbb6453b12e160f310b65d61` (block 35) |
+| Attest tx hash | `d6a25587c4b5bca305c9571dbeed843b5e034ccbdc854bc61b49d81f23a8914b` (block 55) |
+| Verdict | `covered: false` |
+
+```bash
+node scripts/verify.mjs --network undeployed --address 64a99b83…
+```
+
+Reproduce with [midnight-local-dev](https://github.com/midnightntwrk/midnight-local-dev):
+
+```bash
+docker compose -p midnight-local-dev -f standalone.yml up -d
+npm start                                        # menu option 2, paste the address
+node scripts/wallet.mjs --network undeployed     # prints the address to fund
+node scripts/deploy.mjs --network undeployed     # deploy, then attest
+```
+
+### PREVIEW — blocked, faucet down
 
 | Deliverable | Value |
 |---|---|
 | Contract address | *not deployed — faucet outage* |
 | Transaction hash | *not deployed — faucet outage* |
-| Indexer query | *not deployed — faucet outage* |
 
-Blocked on funding, not on code. The Preview faucet self-reports the failure:
+The Preview faucet self-reports the failure:
 
 ```bash
 curl -s https://midnight-tmnight-preview.nethermind.dev/api/health
@@ -240,79 +290,23 @@ curl -s https://midnight-tmnight-preview.nethermind.dev/api/health
 {"status":"NOT_SERVING","reason":"SYNC_STUCK_RECOVERY","needsRestart":true}
 ```
 
-HTTP 503. The faucet's own wallet is stuck in sync recovery and the service asks for a restart, which needs the operator — retrying the captcha would fail and consume a rate-limited attempt. The Preprod faucet answers `{"status":"ok","details":{"faucet-wallet":"ok"}}` on the same path, which is why the public deployment target is Preprod. The Preview wallet address is derived and waiting:
+HTTP 503. Its wallet is stuck in sync recovery and the service asks for an operator restart, so a captcha retry would fail and consume a rate-limited attempt. Preprod answers `{"status":"ok","details":{"faucet-wallet":"ok"}}` on the same path, which is why the public deployment target is Preprod. The Preview address is derived and waiting:
 
 ```
 mn_addr_preview1n2cuarawfep4s693f85qdhnej00u3jkumd3ye00zpea9pa2rl62sqtrt3l
 ```
 
-Moving there once the faucet recovers is a one-word change — `--network preview` — because every network-dependent value lives in `scripts/config.mjs`.
+Deploying there once the faucet recovers is one key change in `scripts/networks.mjs`.
 
-### PREPROD — verified compatible, address ready
+### Docker memory for the local stack, capped explicitly
 
-Preprod runs the same ledger-8 stack as Preview, confirmed against the live chain rather than assumed:
+| Service | Cap | Observed |
+|---|---|---|
+| `midnight-node` | 900 MiB | 175–192 MiB |
+| `midnight-indexer` | 900 MiB | 18–20 MiB |
+| `midnight-proof-server` | 1200 MiB | 6.7 MiB idle, **82 MiB during real proving** |
 
-```bash
-curl -s -X POST https://rpc.preprod.midnight.network -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"system_version","params":[]}'
-# {"jsonrpc":"2.0","id":1,"result":"1.0.2-eb71e64e"}
-```
-
-Node `1.0.2` matches the Preprod row of the compatibility matrix exactly: on-chain runtime 3.0.0, Compact toolchain 0.31.1, runtime 0.16.0, Midnight.js 4.1.1, proof server 8.1.0 — identical to Preview. This contract deploys there unchanged.
-
-```
-mn_addr_preprod1n2cuarawfep4s693f85qdhnej00u3jkumd3ye00zpea9pa2rl62sq2amzz
-```
-
-One seed serves every network; only the address encoding differs, so the same wallet is addressable on `undeployed`, `preview` and `preprod`.
-
-### Reproducing the local deployment
-
-```bash
-git clone https://github.com/midnightntwrk/midnight-local-dev.git
-cd midnight-local-dev && npm install
-docker compose -p midnight-local-dev -f standalone.yml up -d   # node + indexer + proof server
-npm start                                                       # menu option 2, paste the address
-```
-
-```bash
-node scripts/wallet.mjs --network undeployed    # prints the address to fund
-node scripts/deploy.mjs --network undeployed    # deploy, then attest
-node scripts/verify.mjs --network undeployed --address <hex>
-```
-
-`scripts/deploy.mjs` also accepts `--address <hex>` to attest against an already-deployed contract, and `--deploy-only` to stop before attesting.
-
-### Docker memory, capped explicitly
-
-Three services on a 3.9 GiB Docker VM shared with an unrelated container. Caps were added to `standalone.yml` rather than left at the default:
-
-| Service | Cap | Observed | Observed peak |
-|---|---|---|---|
-| `midnight-node` | 900 MiB | 175–192 MiB | 21% of cap |
-| `midnight-indexer` | 900 MiB | 18–20 MiB | 2% of cap |
-| `midnight-proof-server` | 1200 MiB | 6.7 MiB idle | **82 MiB during real proving** |
-
-```yaml
-mem_limit: 900m
-memswap_limit: 900m
-```
-
-Total ceiling 3000 MiB against 3917 MiB available, and actual combined usage stayed under 300 MiB. **Proof-server memory under real proving load is now measured rather than unknown: 82 MiB peak** while proving the `attest` circuit — 7% of its cap.
-
-### Network config lives in one place
-
-`scripts/config.mjs` holds the network id together with its endpoints, keyed by network, so a switch is a key change and nothing else:
-
-```js
-export const NETWORKS = {
-  undeployed: { id: 'undeployed', node: 'http://localhost:9944',  indexerHttp: 'http://localhost:8088/api/v4/graphql', ... },
-  preview:    { id: 'preview',    node: 'https://rpc.preview.midnight.network', ... },
-  preprod:    { id: 'preprod',    node: 'https://rpc.preprod.midnight.network', ... },
-};
-```
-
-`applyNetwork()` is the only place `setNetworkId` is called, and it runs before any provider, wallet or address helper is constructed. `getNetworkId()` throws until it is set, and a wrong value fails later rather than at the call, so having exactly one entry point matters.
+3000 MiB ceiling against 3917 MiB available; combined usage stayed under 300 MiB.
 
 ### Provider architecture
 
@@ -361,9 +355,10 @@ The measurement made the argument. Wallet sync on a public network is the domina
 | | Wallet sync to usable state |
 |---|---|
 | Local `undeployed` chain | **~20 seconds** |
-| Public `preprod` (2.29M blocks) | **10+ minutes**, sustained ~100% CPU |
+| Public Preprod, deploy run | **1h 55m** |
+| Public Preprod, attest run | **2h 11m** |
 
-A wallet-gated page spends that budget before it renders anything. It loses the reader at the door. So the write path — proving, DUST, deploy, attest — stays in the CLI where it is already proven, and the page does the one thing a reader needs: read the attestation and let them check it.
+Roughly 350×, CPU-bound across 2.29M blocks. A wallet-gated page spends that budget before it renders anything. It loses the reader at the door. So the write path — proving, DUST, deploy, attest — stays in the CLI where it is already proven, and the page does the one thing a reader needs: read the attestation and let them check it.
 
 Three consequences worth stating plainly:
 
@@ -423,10 +418,10 @@ One control that re-runs verification client-side: refetch the contract state fr
 The page and the CLI read the **same** `scripts/networks.mjs`. Retargeting is one key:
 
 ```js
-export const DEFAULT_NETWORK = 'undeployed';   // -> 'preprod' | 'preview'
+export const DEFAULT_NETWORK = 'preprod';   // -> 'undeployed' | 'preview'
 ```
 
-Verified by doing it, not assumed: flipping that string to `preprod` and rebuilding produced a page targeting preprod with no other change. `?network=<id>` overrides at runtime for side-by-side checks. A network whose `contract` is still `null` renders a precise, actionable message rather than a spinner.
+Verified by doing it, not assumed: the page shipped pointing at the local chain, then flipping that string to `preprod` and rebuilding repointed it at the public network with no other change. `?network=<id>` overrides at runtime for side-by-side checks. A network whose `contract` is still `null` renders a precise, actionable message rather than a spinner.
 
 ### Bundle
 
@@ -563,6 +558,14 @@ That freedom is exactly why the number must be read. A worked example:
 Reading the flag without the ratio is a category error. Anything below `RATIO_SCALE` (1000000) is a sub-collateralised attestation and any interface displaying the verdict must display the ratio beside it and mark that case as such.
 
 ## How a judge tests this
+
+0. Query the live public attestation — no install, no wallet, one command:
+
+   ```bash
+   curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
+     -H 'Content-Type: application/json' \
+     -d '{"query":"{ contractAction(address: \"8086d2e3db45c9eb2a45b58796202d8e076e04c49e03142db36a98815bb30a05\") { __typename ... on ContractCall { entryPoint } transaction { hash block { height } } } }"}'
+   ```
 
 1. `compact compile --skip-zk contract/src/datum.compact build/datum` — must exit 0 (toolchain 0.31.1).
 2. `npm install && npm test` — 22 tests, all passing.
