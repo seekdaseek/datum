@@ -174,6 +174,8 @@ Three targets. Read the labels — one is a public network anyone can query, one
 
 Deployed and attested on **Midnight Preprod**, the public test network closest to mainnet.
 
+**Live page: <https://datum-9ib.pages.dev>** — reads the attestation below straight from the public indexer. No wallet, no install, no setup.
+
 | Deliverable | Value |
 |---|---|
 | Network | `preprod` (public) |
@@ -184,6 +186,7 @@ Deployed and attested on **Midnight Preprod**, the public test network closest t
 | Attest block | 2295258 |
 | Attest status | `SucceedEntirely` |
 | Verdict on chain | **`covered: false`** |
+| Live frontend | <https://datum-9ib.pages.dev> (Cloudflare Pages) |
 
 The attested book is the headline case: solvent at oracle marks, insolvent at realisable prices.
 
@@ -559,7 +562,9 @@ Reading the flag without the ratio is a category error. Anything below `RATIO_SC
 
 ## How a judge tests this
 
-0. Query the live public attestation — no install, no wallet, one command:
+0. Open <https://datum-9ib.pages.dev> — the live attestation, read from the public indexer in the browser. Press **Verify from chain** to recompute `venuesHash` client-side.
+
+   Or query it directly — no install, no wallet, one command:
 
    ```bash
    curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
