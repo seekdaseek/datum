@@ -4,7 +4,7 @@
 
 Built in [Compact](https://docs.midnight.network/compact) for [Midnight](https://midnight.network).
 
-> Status: in development. Toolchain gate passed — see [Toolchain](#toolchain). Circuit logic is being built now.
+> Status: deployed and attested on **Midnight Preprod**, Midnight's public test network, not mainnet. Contract `8086d2e3db45c9eb2a45b58796202d8e076e04c49e03142db36a98815bb30a05`, attest transaction `b29dc307bb2c42541ffdf9e8e8836391873794d411a17b4ff070a56ea8ee64c5`, landed in block 2295258. Live page: <https://datum.ochinimus.app>. Full record in [Deployment](#deployment).
 
 ## The problem
 
