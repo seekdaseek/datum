@@ -59,4 +59,4 @@ export const NETWORKS = {
 
 export const RATIO_SCALE = 1_000_000n;
 export const MICRO = 1_000_000n;
-export const SLOTS = 8;
+export const SLOTS = 4;

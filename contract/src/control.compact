@@ -32,7 +32,7 @@ import CompactStandardLibrary;
 //
 // OVERFLOW
 //   q_i * price_i                   < 2^128
-//   sum over 8                      < 2^131
+//   sum over 4                      < 2^130
 //   * RATIO_SCALE (< 2^20)          < 2^151
 //   debt * ratio * 1e6              < 2^148
 // Uint<168> accumulators leave 17 bits of headroom.
@@ -41,25 +41,24 @@ import CompactStandardLibrary;
 export ledger covered: Boolean;
 export ledger requiredRatio: Uint<64>;
 
-witness positionSizes(): Vector<8, Uint<64>>;
+witness positionSizes(): Vector<4, Uint<64>>;
 witness debtAmount(): Uint<64>;
 
-export circuit markCheck(prices: Vector<8, Uint<64>>, ratio: Uint<64>): [] {
+export circuit markCheck(prices: Vector<4, Uint<64>>, ratio: Uint<64>): [] {
   const q = positionSizes();
   const debt = debtAmount();
 
   assert(ratio > 0, "control: requiredRatio must be positive");
 
   const ps = disclose(prices);
-  for (const i of 0..8) {
+  for (const i of 0..4) {
     // A held position must have a price; an unpriced position cannot be
     // counted at zero and silently dropped.
     assert(ps[i] > 0 || q[i] == 0, "control: a held position has no oracle price");
   }
 
   const marked =
-    q[0] * ps[0] + q[1] * ps[1] + q[2] * ps[2] + q[3] * ps[3] +
-    q[4] * ps[4] + q[5] * ps[5] + q[6] * ps[6] + q[7] * ps[7];
+    q[0] * ps[0] + q[1] * ps[1] + q[2] * ps[2] + q[3] * ps[3];
 
   const lhs: Uint<168> = marked * 1000000;
   const rhs: Uint<168> = debt * ratio * 1000000;

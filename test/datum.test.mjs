@@ -196,6 +196,14 @@ describe('DISTINCT POOLS: a pool listed twice would undercount price impact', ()
     assert.ok(split > whole, 'the split overstates proceeds');
     await assert.rejects(attest({ privateState: b, venues: [aeroPool, twin], ratio: RATIO_120 }), /the same pool is listed in two slots/);
   });
+  test('a duplicate in non-adjacent slots, behind a padding slot, is rejected', async () => {
+    // The circuit checks each pair once, from the lower index; this pins that
+    // the pair (1, 3) is still reached when slot 2 is padding.
+    const otherPool = { ...aeroPool, pool: poolOf(0x77) };
+    const venues = [otherPool, aeroPool, paddingSlot(), aeroPool];
+    const b = bookFor(venues, [1n * MICRO, BOOK_Q / 2n, 0n, BOOK_Q / 2n], 1n * MICRO);
+    await assert.rejects(attest({ privateState: b, venues, ratio: RATIO_120 }), /the same pool is listed in two slots/);
+  });
   test('the same pool address on a different chain is a different pool', async () => {
     const other = { ...aeroPool, chainId: 1n };
     const b = bookFor([aeroPool, other], [BOOK_Q, 0n], 4_000_000n * MICRO);
@@ -296,13 +304,13 @@ describe('the declared accumulator width holds at the boundary', () => {
   test('a reserve at 2^64 is rejected: Uint<64> excludes its upper bound', async () => {
     await assert.rejects(
       attest({ privateState: bookFor([aeroPool], [1n], 1n), venues: [{ ...aeroPool, reserveX: UINT64_CAP }], ratio: RATIO_120 }),
-      /attest argument 1 .*expected value of type Vector<8, struct VenueSlot/s,
+      /attest argument 1 .*expected value of type Vector<4, struct VenueSlot/s,
     );
   });
   test('a position size at 2^64 is rejected at the witness boundary', async () => {
     const b = bookFor([aeroPool], [1n], 1n);
     b.positions[0] = UINT64_CAP;
-    await assert.rejects(attest({ privateState: b, venues: [aeroPool], ratio: RATIO_120 }), /positionSizes return value .*expected value of type Vector<8, Uint<0\.\.18446744073709551616>>/s);
+    await assert.rejects(attest({ privateState: b, venues: [aeroPool], ratio: RATIO_120 }), /positionSizes return value .*expected value of type Vector<4, Uint<0\.\.18446744073709551616>>/s);
   });
 });
 

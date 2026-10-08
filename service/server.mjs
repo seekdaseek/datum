@@ -70,10 +70,10 @@ const net = { ...NET, proofServer: ENV.PROOF_SERVER ?? NET.proofServer };
 const PORT = Number(ENV.PORT ?? 3034);
 const STATE_DIR = resolve(ENV.STATE_DIR ?? resolve(ROOT, 'state'));
 const CHECKPOINT = resolve(STATE_DIR, `${NET.id}-sponsor.json`);
-const LAST_OPENING = resolve(STATE_DIR, `${NET.id}-demo-last-opening.json`);
 const JOB_LOG = resolve(STATE_DIR, `${NET.id}-jobs.jsonl`);
 const ZK_DIR = resolve(ROOT, 'build/datum-full');
 const DEMO_CONTRACT = need('DEMO_CONTRACT');
+const LAST_OPENING = resolve(STATE_DIR, `${NET.id}-demo-${DEMO_CONTRACT.slice(0, 16)}-opening.json`);
 const ALLOWED = (ENV.ALLOWED_ORIGINS ?? 'https://datum.ochinimus.app,https://datum-9ib.pages.dev,http://localhost:4173,http://localhost:5173').split(',');
 
 const QUEUE_MAX = 5;
@@ -153,7 +153,7 @@ let ctx;
 let demo;
 let providers;
 
-const SLOTS = 8;
+const SLOTS = 4;
 const emptyOpening = () => ({ positions: Array(SLOTS).fill(0n), debt: 0n, nonce: new Uint8Array(32) });
 const witnesses = {
   positionSizes: ({ privateState }) => [privateState, privateState.positions],

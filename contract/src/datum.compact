@@ -61,7 +61,7 @@ import CompactStandardLibrary;
 //   X * FEE_SCALE + q * g            < 2^79
 //   p * (X * FEE_SCALE + q * g)      < 2^143   per-slot LHS, widest term
 //   Y * q * g                        < 2^142   per-slot RHS
-//   sum(p) over 8 slots              < 2^67
+//   sum(p) over 4 slots              < 2^67
 //   sum(p) * RATIO_SCALE             < 2^87
 //   debt * requiredRatio             < 2^128
 //
@@ -110,7 +110,7 @@ export struct VenueSlot {
 // replaced, reordered or replayed at another period without breaking every
 // later link.
 struct BookPreimage {
-  positions: Vector<8, Uint<64>>;
+  positions: Vector<4, Uint<64>>;
   debt: Uint<64>;
   prev: Bytes<32>;
   period: Uint<64>;
@@ -120,7 +120,7 @@ struct BookPreimage {
 // the attestor still holds it. A lender who committed to an unopenable book
 // cannot attest the next period.
 export struct PrevOpening {
-  positions: Vector<8, Uint<64>>;
+  positions: Vector<4, Uint<64>>;
   debt: Uint<64>;
   nonce: Bytes<32>;
 }
@@ -166,7 +166,7 @@ export ledger headPeriod: Uint<64>;
 
 // Latest attestation, flattened for cheap reads.
 export ledger bookCommitment: Bytes<32>;
-export ledger venues: Vector<8, VenueSlot>;
+export ledger venues: Vector<4, VenueSlot>;
 export ledger venuesHash: Bytes<32>;
 export ledger requiredRatio: Uint<64>;
 export ledger covered: Boolean;
@@ -179,8 +179,8 @@ export ledger history: Map<Uint<64>, AttestationRecord>;
 // WITNESSES — private state, never disclosed
 // ---------------------------------------------------------------------------
 
-witness positionSizes(): Vector<8, Uint<64>>;   // collateral sold per slot
-witness claimedProceeds(): Vector<8, Uint<64>>; // claimed lower bound per slot
+witness positionSizes(): Vector<4, Uint<64>>;   // collateral sold per slot
+witness claimedProceeds(): Vector<4, Uint<64>>; // claimed lower bound per slot
 witness debtAmount(): Uint<64>;                 // USD micro-units
 witness commitmentNonce(): Bytes<32>;           // fresh per period
 witness attestorSecret(): Bytes<32>;            // the attestor's key
@@ -190,8 +190,8 @@ witness previousOpening(): PrevOpening;         // last period's opening
 // PURE HELPERS — exported so a verifier recomputes them with public data only
 // ---------------------------------------------------------------------------
 
-export pure circuit venueDigest(venueState: Vector<8, VenueSlot>): Bytes<32> {
-  return persistentHash<Vector<8, VenueSlot>>(venueState);
+export pure circuit venueDigest(venueState: Vector<4, VenueSlot>): Bytes<32> {
+  return persistentHash<Vector<4, VenueSlot>>(venueState);
 }
 
 export pure circuit attestorKey(sk: Bytes<32>): Bytes<32> {
@@ -219,7 +219,7 @@ constructor(refAge: Uint<32>) {
 // THE ATTESTATION
 // ---------------------------------------------------------------------------
 export circuit attest(
-  venueState: Vector<8, VenueSlot>,
+  venueState: Vector<4, VenueSlot>,
   ratio: Uint<64>,
   timestamp: Uint<64>
 ): [] {
@@ -249,7 +249,7 @@ export circuit attest(
 
   const age = maxRefAge;
 
-  for (const i of 0..8) {
+  for (const i of 0..4) {
     const slot = vs[i];
 
     // SOUNDNESS (carried from v1): X > 0 and Y > 0 on EVERY slot, padding
@@ -271,8 +271,10 @@ export circuit attest(
 
       // DISTINCT POOLS: listing one pool twice would let a sale be split
       // across two copies of the same depth and undercount its price impact.
-      for (const j of 0..8) {
-        if (j != i) {
+      // Each unordered pair is checked once, from its lower index: a
+      // duplicate needs both slots active, and the lower one is this branch.
+      for (const j of 0..4) {
+        if (j > i) {
           const other = vs[j];
           assert(
             !(isActive(other) && other.chainId == slot.chainId && other.pool == slot.pool),
@@ -295,7 +297,7 @@ export circuit attest(
     assert(lhs <= rhs, "datum: claimed proceeds exceed realisable proceeds for this slot");
   }
 
-  const proceeds = p[0] + p[1] + p[2] + p[3] + p[4] + p[5] + p[6] + p[7];
+  const proceeds = p[0] + p[1] + p[2] + p[3];
   const isCovered = proceeds * 1000000 >= debt * ratio;
 
   // --- the chain -----------------------------------------------------------

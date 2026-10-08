@@ -7,7 +7,7 @@ setNetworkId('undeployed');
 const which = process.argv[2], dir = process.argv[3];
 const { Contract } = await import(`${dir}/contract/index.js`);
 const z = (n) => new Uint8Array(n);
-const ps = { attestorSecret: z(32), positions: Array(8).fill(0n), proceeds: Array(8).fill(0n), debt: 0n, nonce: z(32), prev: { positions: Array(8).fill(0n), debt: 0n, nonce: z(32) } };
+const ps = { attestorSecret: z(32), positions: Array(4).fill(0n), proceeds: Array(4).fill(0n), debt: 0n, nonce: z(32), prev: { positions: Array(4).fill(0n), debt: 0n, nonce: z(32) } };
 const w = new Proxy({}, { get: (_, k) => ({ privateState }) => [privateState, ({ positionSizes: ps.positions, claimedProceeds: ps.proceeds, debtAmount: 0n, commitmentNonce: z(32), attestorSecret: z(32), previousOpening: ps.prev })[k]] });
 const compiled = CompiledContract.make('datum', Contract).pipe(CompiledContract.withWitnesses(w), CompiledContract.withCompiledFileAssets(dir));
 const keys = ledger.ZswapSecretKeys.fromSeed(new Uint8Array(32).fill(3));

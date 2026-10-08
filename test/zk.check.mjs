@@ -34,7 +34,7 @@ const R = 1_200_000n;
 const Q = 10_000_000n * MICRO;
 
 describe('the real ZK checker accepts what the simulator accepts', () => {
-  test('period 0: genesis attestation, seven padding slots', async () => {
+  test('period 0: genesis attestation, three padding slots', async () => {
     const dep = await deploy();
     await attestOn(dep, { privateState: bookFor([v], [Q], 5_500_000n * MICRO), venues: [v], ratio: R });
     await zkCheck(dep.lastProofData);

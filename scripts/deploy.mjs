@@ -52,7 +52,7 @@ const flag = (k) => process.argv.includes(k);
 const ZK_DIR = resolve(ROOT, 'build/datum-full');
 const STATE = resolve(ROOT, `state/${NET.id}-wallet_seed.json`);
 const MAX_REF_AGE = 21_600n; // six hours
-const SLOTS = 8;
+const SLOTS = 4;
 
 const hex = (u) => Buffer.from(u).toString('hex');
 const randomSecret = () => randomBytes(32).toString('hex');

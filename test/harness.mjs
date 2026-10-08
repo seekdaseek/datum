@@ -13,7 +13,7 @@ import {
   sampleContractAddress,
 } from '@midnight-ntwrk/compact-runtime';
 
-export const SLOTS = 8;
+export const SLOTS = 4;
 export const RATIO_SCALE = 1_000_000n;
 export const FEE_SCALE = 10_000n;
 export const MICRO = 1_000_000n;     // micro-units per whole token
