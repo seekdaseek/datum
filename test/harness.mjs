@@ -1,14 +1,12 @@
-// Simulation harness for the datum contract.
+// Simulation harness for the datum v2 contract.
 //
-// Drives the compiled contract through the Compact runtime's circuit context
-// so the tests exercise the real generated circuit, not a JS re-implementation
-// of it. Every assert in the .compact file is live here.
+// Drives the compiled contract through the Compact runtime's circuit context,
+// so every assert in the .compact source is live — including the kernel
+// block-time queries, which read the block time the context is created with.
+// Deployments are stateful: attestOn() threads the contract state from one
+// period to the next, which is what lets the chaining tests run.
 
-import {
-  Contract,
-  ledger,
-  pureCircuits,
-} from '../build/datum/contract/index.js';
+import { Contract, ledger, pureCircuits } from '../build/datum/contract/index.js';
 import {
   createConstructorContext,
   createCircuitContext,
@@ -17,38 +15,74 @@ import {
 
 export const SLOTS = 8;
 export const RATIO_SCALE = 1_000_000n;
-export const MICRO = 1_000_000n;      // micro-units per whole token
-export const UINT64_CAP = 1n << 64n;  // Uint<64> is Uint<0..2^64>, exclusive
+export const FEE_SCALE = 10_000n;
+export const MICRO = 1_000_000n;     // micro-units per whole token
+export const UINT64_CAP = 1n << 64n; // Uint<64> is Uint<0..2^64>, exclusive
+export const MAX_REF_AGE = 21_600n;  // six hours
+
+// A fixed "now" for every simulated block, close to the recorded Base
+// reference block so real fixtures fall inside maxRefAge.
+export const NOW = 1_791_443_400n;
 
 const COIN_PUBLIC_KEY = '0'.repeat(64);
 
-// The private state carried between witness calls. This is the book.
+export const bytesOf = (byte, n = 32) => new Uint8Array(n).fill(byte);
+export const nonceOf = (byte) => bytesOf(byte);
+export const poolOf = (byte) => bytesOf(byte, 20);
+export const ATTESTOR_SECRET = bytesOf(0xa7);
+
+// The private state the witnesses read. This is the book.
 export const witnesses = {
   positionSizes: ({ privateState }) => [privateState, privateState.positions],
   claimedProceeds: ({ privateState }) => [privateState, privateState.proceeds],
   debtAmount: ({ privateState }) => [privateState, privateState.debt],
   commitmentNonce: ({ privateState }) => [privateState, privateState.nonce],
+  attestorSecret: ({ privateState }) => [privateState, privateState.attestorSecret ?? ATTESTOR_SECRET],
+  previousOpening: ({ privateState }) => [privateState, privateState.prev ?? emptyOpening()],
 };
 
-export const nonceOf = (byte) => new Uint8Array(32).fill(byte);
-export const venueIdOf = (byte) => new Uint8Array(32).fill(byte);
+export const emptyOpening = () => ({ positions: Array(SLOTS).fill(0n), debt: 0n, nonce: bytesOf(0) });
 
-/** A padding slot: real reserves, nothing sold into it. */
-export const paddingSlot = (i = 0) => ({
-  venueId: venueIdOf(0),
-  reserveX: 1n,
-  reserveY: 1n,
-  blockHeight: 0n,
+/** An active venue slot. Defaults describe a fresh Aerodrome-style pool on Base. */
+export const venue = (o = {}) => ({
+  chainId: 8453n,
+  pool: poolOf(0x11),
+  collateralIsToken0: false,
+  decX: 18n,
+  decY: 6n,
+  feeBps: 30n,
+  syncBlock: 1_000n,
+  syncTx: bytesOf(0x22),
+  logIndex: 7n,
+  refBlock: 1_006n,
+  refTime: NOW - 60n,
+  reserveX: 1_000_000n * MICRO,
+  reserveY: 50_000_000n * MICRO,
+  ...o,
 });
 
-/** Pad a partial venue list out to SLOTS entries. */
+/** A padding slot: inactive, contributes nothing. */
+export const paddingSlot = () => ({
+  chainId: 0n,
+  pool: poolOf(0),
+  collateralIsToken0: false,
+  decX: 0n,
+  decY: 0n,
+  feeBps: 0n,
+  syncBlock: 0n,
+  syncTx: bytesOf(0),
+  logIndex: 0n,
+  refBlock: 0n,
+  refTime: 0n,
+  reserveX: 1n,
+  reserveY: 1n,
+});
+
 export const padVenues = (slots) => {
   const out = slots.slice();
-  while (out.length < SLOTS) out.push(paddingSlot(out.length));
+  while (out.length < SLOTS) out.push(paddingSlot());
   return out;
 };
-
-/** Pad a partial bigint list out to SLOTS entries with zeros. */
 export const padZeros = (xs) => {
   const out = xs.slice();
   while (out.length < SLOTS) out.push(0n);
@@ -56,64 +90,59 @@ export const padZeros = (xs) => {
 };
 
 /**
- * The true realisable proceeds of selling q into constant-product reserves
- * (X, Y), floored. This is the tight lower bound the circuit will accept:
- * floor(Y*q/(X+q)) satisfies p*(X+q) <= Y*q, and floor(...)+1 does not.
+ * Exact constant-product-with-fee output, floored: the tight lower bound the
+ * circuit accepts. floor(...) satisfies the bound and floor(...)+1 does not.
  */
-export const realisableProceeds = (X, Y, q) => (q === 0n ? 0n : (Y * q) / (X + q));
+export const realisableProceeds = (X, Y, q, feeBps = 30n) => {
+  if (q === 0n) return 0n;
+  const g = FEE_SCALE - feeBps;
+  return (Y * q * g) / (X * FEE_SCALE + q * g);
+};
 
-/**
- * The oracle-mark valuation of the same position: size times spot price,
- * with spot taken as Y/X. This is the number a conventional solvency
- * dashboard reports, and the number the contract refuses to trust.
- */
+/** The oracle-mark valuation of the same size: size times spot, spot = Y/X. */
 export const markedValue = (X, Y, q) => (q * Y) / X;
 
-/** Build the private book for a set of venues and sizes. */
-export const bookFor = (venues, sizes, debt, nonceByte = 1) => ({
-  positions: padZeros(sizes),
-  proceeds: padZeros(
-    padVenues(venues).map((v, i) =>
-      realisableProceeds(v.reserveX, v.reserveY, padZeros(sizes)[i]),
-    ),
-  ),
-  debt,
-  nonce: nonceOf(nonceByte),
-});
+/** Build the private book for a set of venues and sizes, claiming the tight bound. */
+export const bookFor = (venues, sizes, debt, nonceByte = 1) => {
+  const vs = padVenues(venues);
+  const positions = padZeros(sizes);
+  return {
+    positions,
+    proceeds: vs.map((v, i) => (v.chainId === 0n ? 0n : realisableProceeds(v.reserveX, v.reserveY, positions[i], v.feeBps))),
+    debt,
+    nonce: nonceOf(nonceByte),
+  };
+};
 
-/** Deploy a fresh contract instance with the given private state. */
-export const deploy = async (privateState) => {
+/** Deploy a fresh contract. Returns a mutable deployment handle. */
+export const deploy = async ({ privateState = {}, refAge = MAX_REF_AGE } = {}) => {
   const contract = new Contract(witnesses);
   const address = sampleContractAddress();
   const initial = await contract.initialState(
-    createConstructorContext(privateState, COIN_PUBLIC_KEY),
+    createConstructorContext({ ...privateState }, COIN_PUBLIC_KEY),
+    refAge,
   );
-  return { contract, address, initial };
+  return { contract, address, state: initial.currentContractState, privateState: initial.currentPrivateState };
 };
 
 /**
- * Run `attest` once against a fresh deployment. Returns the resulting public
- * ledger. Throws whatever the circuit throws — the failure tests depend on
- * that propagating unchanged.
+ * Run `attest` against a deployment and advance its state. Throws whatever the
+ * circuit throws — the failure tests depend on that propagating unchanged.
  */
-export const attest = async ({ privateState, venues, ratio, timestamp = 1_700_000_000n }) => {
-  const { contract, address, initial } = await deploy(privateState);
-  // Runtime 0.16.0's createCircuitContext takes no circuitId argument, and
-  // exposes the query context flat on the CircuitContext rather than nested
-  // under callContext. Those two lines are the whole ledger-8 adaptation.
-  const context = createCircuitContext(
-    address,
-    COIN_PUBLIC_KEY,
-    initial.currentContractState,
-    initial.currentPrivateState,
-  );
-  const { context: after } = await contract.circuits.attest(
-    context,
-    padVenues(venues),
-    ratio,
-    timestamp,
-  );
-  return ledger(after.currentQueryContext.state);
+export const attestOn = async (dep, { privateState, venues, ratio, timestamp = NOW, now = NOW }) => {
+  // Runtime 0.16.0: createCircuitContext(address, coinPK, state, privateState,
+  // gasLimit?, costModel?, time?). `time` becomes the block's
+  // secondsSinceEpoch, which the kernel block-time queries read.
+  const context = createCircuitContext(dep.address, COIN_PUBLIC_KEY, dep.state, privateState, undefined, undefined, Number(now));
+  const { context: after } = await dep.contract.circuits.attest(context, padVenues(venues), ratio, timestamp);
+  dep.state = after.currentQueryContext.state;
+  return ledger(dep.state);
 };
 
-export { pureCircuits, padVenues as venues8 };
+/** One-shot: deploy and attest once. */
+export const attest = async (args) => {
+  const dep = await deploy({ privateState: args.privateState });
+  return attestOn(dep, args);
+};
+
+export { pureCircuits, ledger };

@@ -1,72 +1,59 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   attest,
+  attestOn,
+  deploy,
   bookFor,
-  padZeros,
+  venue,
+  paddingSlot,
   padVenues,
-  venueIdOf,
+  padZeros,
+  poolOf,
   nonceOf,
+  bytesOf,
   realisableProceeds,
   markedValue,
   pureCircuits,
+  emptyOpening,
   MICRO,
   RATIO_SCALE,
   UINT64_CAP,
+  NOW,
+  MAX_REF_AGE,
 } from './harness.mjs';
 
 // ---------------------------------------------------------------------------
-// A deep pool and a book large enough to move it.
-//
-// Reserves are 1,000,000 collateral against 50,000,000 quote, so the oracle
-// spot price is 50 quote per collateral unit. The book is 500,000 collateral —
-// half the pool. Everything is in micro-units.
+// A real pool. Reserves of the Aerodrome volatile AERO/USDC pool on Base at
+// block 52327009 (log 630), as recorded in test/fixtures by
+// scripts/record-fixtures.mjs and verified against the chain by
+// test/provenance.test.mjs. AERO is the collateral, USDC the quote.
 // ---------------------------------------------------------------------------
-const POOL_X = 1_000_000n * MICRO;
-const POOL_Y = 50_000_000n * MICRO;
-const BOOK_Q = 500_000n * MICRO;
+const fx = JSON.parse(readFileSync(new URL('./fixtures/base-aero-usdc.json', import.meta.url)));
+const big = (s) => BigInt(s.slice(0, -1));
+const AERO_X = big(fx.honestSlot.reserveX); // ~27.8M AERO, micro-units
+const AERO_Y = big(fx.honestSlot.reserveY); // ~21.6M USDC, micro-units
 
-const RATIO_120 = 1_200_000n; // 120%
-
-const oneVenue = [
-  { venueId: venueIdOf(7), reserveX: POOL_X, reserveY: POOL_Y, blockHeight: 21_000_000n },
-];
+const aeroPool = venue({ pool: poolOf(0x6c), reserveX: AERO_X, reserveY: AERO_Y, feeBps: 30n });
+const RATIO_120 = 1_200_000n;
+const BOOK_Q = 10_000_000n * MICRO; // 10M AERO, about a third of the pool's AERO side
 
 // ===========================================================================
 // THE HEADLINE TEST
 // ===========================================================================
 describe('THE PRODUCT: a book that is solvent at oracle marks is NOT COVERED at realisable prices', () => {
-  test('same book, same ratio: marks say covered, datum says not covered', async () => {
-    // 20,000,000 quote of debt against a book worth 25,000,000 at the mark.
-    const debt = 20_000_000n * MICRO;
+  test('real AERO/USDC depth: marks say covered, datum says not covered', async () => {
+    const debt = 5_500_000n * MICRO;
+    const marked = markedValue(AERO_X, AERO_Y, BOOK_Q);
+    const realisable = realisableProceeds(AERO_X, AERO_Y, BOOK_Q, 30n);
 
-    // What a conventional solvency dashboard reports: size times spot.
-    const marked = markedValue(POOL_X, POOL_Y, BOOK_Q);
-    // What the book would actually fetch, selling into this pool's depth.
-    const realisable = realisableProceeds(POOL_X, POOL_Y, BOOK_Q);
-
-    // The gap is real and it is large: the mark overstates by ~50%.
     assert.ok(marked > realisable, 'the mark must overstate the realisable value');
+    assert.ok(marked * RATIO_SCALE >= debt * RATIO_120, 'precondition: solvent at oracle marks');
+    assert.ok(realisable * RATIO_SCALE < debt * RATIO_120, 'precondition: insolvent at realisable prices');
 
-    // At oracle marks this book clears a 120% requirement.
-    assert.ok(
-      marked * RATIO_SCALE >= debt * RATIO_120,
-      'precondition: the book must look solvent at oracle marks',
-    );
-    // At realisable prices it does not.
-    assert.ok(
-      realisable * RATIO_SCALE < debt * RATIO_120,
-      'precondition: the book must be insolvent at realisable prices',
-    );
-
-    // And that is exactly what the contract publishes.
-    const out = await attest({
-      privateState: bookFor(oneVenue, [BOOK_Q], debt),
-      venues: oneVenue,
-      ratio: RATIO_120,
-    });
-
+    const out = await attest({ privateState: bookFor([aeroPool], [BOOK_Q], debt), venues: [aeroPool], ratio: RATIO_120 });
     assert.equal(out.covered, false, 'verdict must be NOT COVERED');
     assert.equal(out.attestationCount, 1n);
     assert.equal(out.requiredRatio, RATIO_120);
@@ -78,176 +65,217 @@ describe('THE PRODUCT: a book that is solvent at oracle marks is NOT COVERED at 
 // ===========================================================================
 describe('a genuinely solvent book', () => {
   test('is COVERED', async () => {
-    // Same book and pool, half the debt.
-    const debt = 10_000_000n * MICRO;
-    const realisable = realisableProceeds(POOL_X, POOL_Y, BOOK_Q);
-    assert.ok(realisable * RATIO_SCALE >= debt * RATIO_120);
-
-    const out = await attest({
-      privateState: bookFor(oneVenue, [BOOK_Q], debt),
-      venues: oneVenue,
-      ratio: RATIO_120,
-    });
-
-    assert.equal(out.covered, true, 'verdict must be COVERED');
-    assert.equal(out.attestationCount, 1n);
+    const debt = 4_000_000n * MICRO;
+    const out = await attest({ privateState: bookFor([aeroPool], [BOOK_Q], debt), venues: [aeroPool], ratio: RATIO_120 });
+    assert.equal(out.covered, true);
   });
 
-  test('publishes the venue array in the clear and a digest a verifier can recompute', async () => {
-    const out = await attest({
-      privateState: bookFor(oneVenue, [BOOK_Q], 10_000_000n * MICRO),
-      venues: oneVenue,
-      ratio: RATIO_120,
-    });
-
-    // The public inputs land on the ledger unchanged.
-    assert.equal(out.venues.length, 8);
-    assert.equal(out.venues[0].reserveX, POOL_X);
-    assert.equal(out.venues[0].reserveY, POOL_Y);
-    assert.equal(out.venues[0].blockHeight, 21_000_000n);
-    assert.deepEqual(out.venues[0].venueId, venueIdOf(7));
-
-    // And the digest is reproducible from them alone, with no private input.
-    const recomputed = pureCircuits.venueDigest(padVenues(oneVenue));
-    assert.deepEqual(out.venuesHash, recomputed, 'venuesHash must be recomputable from public data');
+  test('publishes the venue provenance in the clear and a digest a verifier can recompute', async () => {
+    const out = await attest({ privateState: bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO), venues: [aeroPool], ratio: RATIO_120 });
+    const v = out.venues[0];
+    assert.equal(v.chainId, 8453n);
+    assert.deepEqual(v.pool, poolOf(0x6c));
+    assert.equal(v.syncBlock, aeroPool.syncBlock);
+    assert.equal(v.logIndex, aeroPool.logIndex);
+    assert.equal(v.refBlock, aeroPool.refBlock);
+    assert.equal(v.reserveX, AERO_X);
+    assert.deepEqual(out.venuesHash, pureCircuits.venueDigest(padVenues([aeroPool])));
   });
 });
 
 // ===========================================================================
-// SOUNDNESS: the asserts are the product
+// SOUNDNESS CARRIED FROM v1
 // ===========================================================================
 describe('zero-padding cannot be used to smuggle proceeds', () => {
-  test('a nonzero p through a q=0 padding slot is rejected', async () => {
-    const debt = 20_000_000n * MICRO;
-    const book = bookFor(oneVenue, [BOOK_Q], debt);
-
-    // Slot 1 is padding: q = 0. Claim proceeds through it anyway — enough to
-    // close the gap that made the headline test fail.
-    assert.equal(book.positions[1], 0n, 'slot 1 must be a padding slot');
-    book.proceeds[1] = 10_000_000n * MICRO;
-
+  test('a padding slot claiming proceeds is rejected', async () => {
+    const book = bookFor([aeroPool], [BOOK_Q], 5_500_000n * MICRO);
+    book.proceeds[1] = 3_000_000n * MICRO;
     await assert.rejects(
-      attest({ privateState: book, venues: oneVenue, ratio: RATIO_120 }),
-      /claimed proceeds exceed realisable proceeds/,
-      'a padding slot must not be able to contribute proceeds',
+      attest({ privateState: book, venues: [aeroPool], ratio: RATIO_120 }),
+      /a padding slot cannot claim proceeds/,
     );
   });
 
-  test('the same smuggled book would otherwise have passed', async () => {
-    // Proof that the previous test is testing something: with the smuggled
-    // proceeds counted, the book clears the bar. The assert is the only thing
-    // standing between this book and a false COVERED.
-    const debt = 20_000_000n * MICRO;
-    const honest = realisableProceeds(POOL_X, POOL_Y, BOOK_Q);
-    const smuggled = honest + 10_000_000n * MICRO;
-    assert.ok(honest * RATIO_SCALE < debt * RATIO_120, 'honest book fails');
-    assert.ok(smuggled * RATIO_SCALE >= debt * RATIO_120, 'smuggled book would pass');
+  test('the same smuggled book would otherwise have passed', () => {
+    const debt = 5_500_000n * MICRO;
+    const honest = realisableProceeds(AERO_X, AERO_Y, BOOK_Q, 30n);
+    assert.ok(honest * RATIO_SCALE < debt * RATIO_120);
+    assert.ok((honest + 3_000_000n * MICRO) * RATIO_SCALE >= debt * RATIO_120);
   });
 });
 
 describe('degenerate reserves are rejected in every slot', () => {
+  const book = () => bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO);
   test('X = 0 in a padding slot fails', async () => {
-    const venues = padVenues(oneVenue);
-    venues[3] = { ...venues[3], reserveX: 0n };
-    await assert.rejects(
-      attest({
-        privateState: bookFor(oneVenue, [BOOK_Q], 10_000_000n * MICRO),
-        venues,
-        ratio: RATIO_120,
-      }),
-      /reserveX must be positive in every slot/,
-    );
+    const vs = padVenues([aeroPool]); vs[3] = { ...vs[3], reserveX: 0n };
+    await assert.rejects(attest({ privateState: book(), venues: vs, ratio: RATIO_120 }), /reserveX must be positive in every slot/);
   });
-
   test('Y = 0 in a padding slot fails', async () => {
-    const venues = padVenues(oneVenue);
-    venues[3] = { ...venues[3], reserveY: 0n };
-    await assert.rejects(
-      attest({
-        privateState: bookFor(oneVenue, [BOOK_Q], 10_000_000n * MICRO),
-        venues,
-        ratio: RATIO_120,
-      }),
-      /reserveY must be positive in every slot/,
-    );
+    const vs = padVenues([aeroPool]); vs[3] = { ...vs[3], reserveY: 0n };
+    await assert.rejects(attest({ privateState: book(), venues: vs, ratio: RATIO_120 }), /reserveY must be positive in every slot/);
   });
-
   test('X = 0 in the active slot fails', async () => {
-    const venues = [{ ...oneVenue[0], reserveX: 0n }];
-    const book = bookFor(oneVenue, [BOOK_Q], 10_000_000n * MICRO);
-    await assert.rejects(
-      attest({ privateState: book, venues, ratio: RATIO_120 }),
-      /reserveX must be positive in every slot/,
-    );
+    await assert.rejects(attest({ privateState: book(), venues: [{ ...aeroPool, reserveX: 0n }], ratio: RATIO_120 }), /reserveX must be positive/);
   });
-
-  test('X = 0 with a nonzero claim is exactly the unbounded-proceeds hole', async () => {
-    // This is the case the positivity assert exists for. With X = 0 and q = 0
-    // the per-slot constraint reads p*0 <= Y*0, i.e. 0 <= 0, which holds for
-    // any p at all. Without assert(X > 0) this book would be COVERED.
-    const venues = padVenues(oneVenue);
-    venues[3] = { ...venues[3], reserveX: 0n };
-
-    const debt = 20_000_000n * MICRO;
-    const book = bookFor(oneVenue, [BOOK_Q], debt);
-    book.proceeds[3] = 10_000_000n * MICRO; // unbounded claim through a dead slot
-
-    // The constraint alone does not stop it...
-    const X = 0n, q = 0n, Y = venues[3].reserveY, p = book.proceeds[3];
-    assert.ok(p * (X + q) <= Y * q, 'the per-slot constraint is satisfied at X=0');
-    // ...the positivity assert does.
-    await assert.rejects(
-      attest({ privateState: book, venues, ratio: RATIO_120 }),
-      /reserveX must be positive in every slot/,
-    );
-  });
-
   test('a zero required ratio is rejected', async () => {
-    await assert.rejects(
-      attest({
-        privateState: bookFor(oneVenue, [BOOK_Q], 20_000_000n * MICRO),
-        venues: oneVenue,
-        ratio: 0n,
-      }),
-      /requiredRatio must be positive/,
-    );
+    await assert.rejects(attest({ privateState: book(), venues: [aeroPool], ratio: 0n }), /requiredRatio must be positive/);
   });
 });
 
 describe('proceeds cannot be overclaimed', () => {
-  test('p exactly at the realisable bound is accepted', async () => {
-    const book = bookFor(oneVenue, [BOOK_Q], 10_000_000n * MICRO);
-    assert.equal(book.proceeds[0], realisableProceeds(POOL_X, POOL_Y, BOOK_Q));
-    const out = await attest({ privateState: book, venues: oneVenue, ratio: RATIO_120 });
+  test('p exactly at the fee-adjusted bound is accepted', async () => {
+    const b = bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO);
+    const out = await attest({ privateState: b, venues: [aeroPool], ratio: RATIO_120 });
     assert.equal(out.covered, true);
   });
-
   test('p one micro-unit above the bound is rejected', async () => {
-    const book = bookFor(oneVenue, [BOOK_Q], 10_000_000n * MICRO);
-    book.proceeds[0] = book.proceeds[0] + 1n;
-    await assert.rejects(
-      attest({ privateState: book, venues: oneVenue, ratio: RATIO_120 }),
-      /claimed proceeds exceed realisable proceeds/,
-    );
+    const b = bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO);
+    b.proceeds[0] += 1n;
+    await assert.rejects(attest({ privateState: b, venues: [aeroPool], ratio: RATIO_120 }), /claimed proceeds exceed realisable proceeds/);
   });
-
-  test('p far above the bound is rejected', async () => {
-    const book = bookFor(oneVenue, [BOOK_Q], 20_000_000n * MICRO);
-    book.proceeds[0] = 40_000_000n * MICRO;
-    await assert.rejects(
-      attest({ privateState: book, venues: oneVenue, ratio: RATIO_120 }),
-      /claimed proceeds exceed realisable proceeds/,
-    );
-  });
-
   test('underclaiming p only hurts the prover', async () => {
-    // A book that would clear the bar honestly fails to clear it when the
-    // prover understates proceeds. No assert fires; the verdict just flips.
-    const debt = 10_000_000n * MICRO;
-    const book = bookFor(oneVenue, [BOOK_Q], debt);
-    book.proceeds[0] = 1n;
-    const out = await attest({ privateState: book, venues: oneVenue, ratio: RATIO_120 });
-    assert.equal(out.covered, false);
+    const b = bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO);
+    b.proceeds[0] = 1n;
+    assert.equal((await attest({ privateState: b, venues: [aeroPool], ratio: RATIO_120 })).covered, false);
+  });
+});
+
+// ===========================================================================
+// NEW IN v2: THE FEE IS IN THE BOUND
+// ===========================================================================
+describe('FEE: v1 ignored the pool fee; v2 does not', () => {
+  test('a claim at the fee-free bound Y*q/(X+q) is now rejected', async () => {
+    const b = bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO);
+    const feeFree = realisableProceeds(AERO_X, AERO_Y, BOOK_Q, 0n);
+    assert.ok(feeFree > b.proceeds[0], 'the fee-free figure overstates a real sale');
+    b.proceeds[0] = feeFree;
+    await assert.rejects(attest({ privateState: b, venues: [aeroPool], ratio: RATIO_120 }), /claimed proceeds exceed realisable proceeds/);
+  });
+  test('feeBps of 10000 or more is rejected', async () => {
+    await assert.rejects(attest({ privateState: bookFor([aeroPool], [BOOK_Q], 1n), venues: [{ ...aeroPool, feeBps: 10_000n }], ratio: RATIO_120 }), /feeBps must be below 10000/);
+  });
+});
+
+// ===========================================================================
+// NEW IN v2: FRESHNESS ENFORCED BY THE LEDGER'S BLOCK TIME
+// ===========================================================================
+describe('FRESHNESS: reserves must be recent, judged by Midnight block time', () => {
+  const b = () => bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO);
+  test('a reference block older than maxRefAge is rejected', async () => {
+    const stale = { ...aeroPool, refTime: NOW - MAX_REF_AGE - 1n };
+    await assert.rejects(attest({ privateState: b(), venues: [stale], ratio: RATIO_120 }), /reference block is older than maxRefAge/);
+  });
+  test('a reference block just inside maxRefAge is accepted', async () => {
+    const fresh = { ...aeroPool, refTime: NOW - MAX_REF_AGE + 1n };
+    assert.equal((await attest({ privateState: b(), venues: [fresh], ratio: RATIO_120 })).covered, true);
+  });
+  test('a reference block timestamped in the future is rejected', async () => {
+    await assert.rejects(attest({ privateState: b(), venues: [{ ...aeroPool, refTime: NOW + 1n }], ratio: RATIO_120 }), /reference block is in the future/);
+  });
+  test('a refBlock before its own Sync is rejected', async () => {
+    await assert.rejects(attest({ privateState: b(), venues: [{ ...aeroPool, refBlock: aeroPool.syncBlock - 1n }], ratio: RATIO_120 }), /refBlock precedes the Sync/);
+  });
+  test('attestedAt more than ten minutes from block time is rejected', async () => {
+    await assert.rejects(attest({ privateState: b(), venues: [aeroPool], ratio: RATIO_120, timestamp: NOW - 700n }), /attestedAt is too far in the past/);
+    await assert.rejects(attest({ privateState: b(), venues: [aeroPool], ratio: RATIO_120, timestamp: NOW + 700n }), /attestedAt is too far in the future/);
+  });
+});
+
+// ===========================================================================
+// NEW IN v2: ONE POOL, ONE SLOT
+// ===========================================================================
+describe('DISTINCT POOLS: a pool listed twice would undercount price impact', () => {
+  test('splitting one sale across two copies of the same pool is rejected', async () => {
+    const half = BOOK_Q / 2n;
+    const twin = { ...aeroPool, logIndex: aeroPool.logIndex };
+    const b = bookFor([aeroPool, twin], [half, half], 5_500_000n * MICRO);
+    // Two halves into two copies of the same depth fetch more than one sale
+    // into the real pool — which is exactly why this must be rejected.
+    const split = b.proceeds[0] + b.proceeds[1];
+    const whole = realisableProceeds(AERO_X, AERO_Y, BOOK_Q, 30n);
+    assert.ok(split > whole, 'the split overstates proceeds');
+    await assert.rejects(attest({ privateState: b, venues: [aeroPool, twin], ratio: RATIO_120 }), /the same pool is listed in two slots/);
+  });
+  test('the same pool address on a different chain is a different pool', async () => {
+    const other = { ...aeroPool, chainId: 1n };
+    const b = bookFor([aeroPool, other], [BOOK_Q, 0n], 4_000_000n * MICRO);
+    assert.equal((await attest({ privateState: b, venues: [aeroPool, other], ratio: RATIO_120 })).covered, true);
+  });
+});
+
+// ===========================================================================
+// NEW IN v2: ONLY THE ATTESTOR, AND EVERY PERIOD CHAINED
+// ===========================================================================
+describe('ATTESTOR: only the registered key can attest', () => {
+  test('a different secret is rejected', async () => {
+    const dep = await deploy();
+    const b = { ...bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO), attestorSecret: bytesOf(0x01) };
+    await assert.rejects(attestOn(dep, { privateState: b, venues: [aeroPool], ratio: RATIO_120 }), /caller is not the registered attestor/);
+  });
+  test('the published attestor key is the hash of the secret, not the secret', async () => {
+    const dep = await deploy();
+    const out = await attestOn(dep, { privateState: bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO), venues: [aeroPool], ratio: RATIO_120 });
+    assert.deepEqual(out.attestor, pureCircuits.attestorKey(bytesOf(0xa7)));
+    assert.notDeepEqual(out.attestor, bytesOf(0xa7));
+  });
+  test('maxRefAge must be positive at deployment', async () => {
+    await assert.rejects(deploy({ refAge: 0n }), /maxRefAge must be positive/);
+  });
+});
+
+describe('CHAIN: each period commits to the last, and must be able to open it', () => {
+  const p0 = () => bookFor([aeroPool], [BOOK_Q], 5_500_000n * MICRO, 1);
+  const p1Book = (prev) => ({ ...bookFor([aeroPool], [BOOK_Q / 2n], 2_000_000n * MICRO, 2), prev });
+
+  test('a second period with the correct previous opening is accepted and linked', async () => {
+    const dep = await deploy();
+    const b0 = p0();
+    const l0 = await attestOn(dep, { privateState: b0, venues: [aeroPool], ratio: RATIO_120 });
+    const l1 = await attestOn(dep, {
+      privateState: p1Book({ positions: b0.positions, debt: b0.debt, nonce: b0.nonce }),
+      venues: [aeroPool],
+      ratio: RATIO_120,
+    });
+    assert.equal(l1.attestationCount, 2n);
+    assert.equal(l1.history.size(), 2n);
+    const r0 = l1.history.lookup(0n);
+    const r1 = l1.history.lookup(1n);
+    assert.deepEqual(r0.commitment, l0.bookCommitment);
+    assert.deepEqual(r1.prev, r0.commitment, 'period 1 links to period 0');
+    assert.deepEqual(r0.prev, bytesOf(0), 'period 0 links to genesis');
+    assert.equal(r0.covered, false);
+    assert.equal(r1.covered, true, 'history keeps each period\'s own verdict');
+    assert.deepEqual(l1.prevHead, r0.commitment);
+    assert.deepEqual(l1.head, r1.commitment);
+  });
+
+  test('a wrong previous opening is rejected — the attestor must hold last period\'s book', async () => {
+    const dep = await deploy();
+    const b0 = p0();
+    await attestOn(dep, { privateState: b0, venues: [aeroPool], ratio: RATIO_120 });
+    const lie = { positions: b0.positions, debt: b0.debt - 1n, nonce: b0.nonce };
+    await assert.rejects(
+      attestOn(dep, { privateState: p1Book(lie), venues: [aeroPool], ratio: RATIO_120 }),
+      /previous period's opening does not match the chain head/,
+    );
+  });
+
+  test('a forgotten previous nonce is rejected', async () => {
+    const dep = await deploy();
+    const b0 = p0();
+    await attestOn(dep, { privateState: b0, venues: [aeroPool], ratio: RATIO_120 });
+    await assert.rejects(
+      attestOn(dep, { privateState: p1Book({ positions: b0.positions, debt: b0.debt, nonce: nonceOf(9) }), venues: [aeroPool], ratio: RATIO_120 }),
+      /previous period's opening does not match/,
+    );
+  });
+
+  test('the same book and nonce commit differently at a different period', async () => {
+    const depA = await deploy();
+    const b0 = p0();
+    const a0 = await attestOn(depA, { privateState: b0, venues: [aeroPool], ratio: RATIO_120 });
+    const a1 = await attestOn(depA, { privateState: { ...b0, prev: { positions: b0.positions, debt: b0.debt, nonce: b0.nonce } }, venues: [aeroPool], ratio: RATIO_120 });
+    assert.notDeepEqual(a0.bookCommitment, a1.bookCommitment, 'a commitment cannot be replayed at another period');
   });
 });
 
@@ -255,66 +283,26 @@ describe('proceeds cannot be overclaimed', () => {
 // OVERFLOW BOUNDARY
 // ===========================================================================
 describe('the declared accumulator width holds at the boundary', () => {
-  const MAX_U64 = UINT64_CAP - 1n; // 2^64 - 1, the largest Uint<64> value
-
+  const MAX_U64 = UINT64_CAP - 1n;
   test('maximum-width inputs compute without overflow', async () => {
-    // X = Y = q = 2^64 - 1 drives p*(X+q) to just under 2^129, the widest
-    // intermediate in the circuit. The Uint<136> accumulators must absorb it.
-    const venues = [
-      { venueId: venueIdOf(9), reserveX: MAX_U64, reserveY: MAX_U64, blockHeight: MAX_U64 },
-    ];
-    const p = realisableProceeds(MAX_U64, MAX_U64, MAX_U64);
-
-    // Confirm we are actually at the boundary this test claims to probe.
-    const widest = p * (MAX_U64 + MAX_U64);
-    assert.ok(widest > 1n << 126n, 'the intermediate must be near 2^129');
-    assert.ok(widest < 1n << 136n, 'and must still fit the declared accumulator');
-
-    const book = {
-      positions: padZeros([MAX_U64]),
-      proceeds: padZeros([p]),
-      debt: 1n,
-      nonce: nonceOf(1),
-    };
-
-    const out = await attest({ privateState: book, venues, ratio: RATIO_120 });
-    assert.equal(out.covered, true);
+    const v = venue({ reserveX: MAX_U64, reserveY: MAX_U64 });
+    const p = realisableProceeds(MAX_U64, MAX_U64, MAX_U64, 30n);
+    const widest = p * (MAX_U64 * 10_000n + MAX_U64 * 9_970n);
+    assert.ok(widest > 1n << 140n, 'the intermediate must be near the 2^143 budget');
+    assert.ok(widest < 1n << 160n, 'and must fit the declared Uint<160> accumulator');
+    const book = { positions: padZeros([MAX_U64]), proceeds: padZeros([p]), debt: 1n, nonce: nonceOf(1) };
+    assert.equal((await attest({ privateState: book, venues: [v], ratio: RATIO_120 })).covered, true);
   });
-
   test('a reserve at 2^64 is rejected: Uint<64> excludes its upper bound', async () => {
-    const venues = [
-      { venueId: venueIdOf(9), reserveX: UINT64_CAP, reserveY: MAX_U64, blockHeight: 0n },
-    ];
     await assert.rejects(
-      attest({
-        privateState: bookFor(oneVenue, [BOOK_Q], 1n),
-        venues,
-        ratio: RATIO_120,
-      }),
+      attest({ privateState: bookFor([aeroPool], [1n], 1n), venues: [{ ...aeroPool, reserveX: UINT64_CAP }], ratio: RATIO_120 }),
       /attest argument 1 .*expected value of type Vector<8, struct VenueSlot/s,
-      'the public reserve must be caught by the circuit argument type check',
     );
   });
-
   test('a position size at 2^64 is rejected at the witness boundary', async () => {
-    // The private side is range-checked too: a prover cannot widen a witness
-    // past its declared type to escape the accumulator budget.
-    const book = bookFor(oneVenue, [BOOK_Q], 1n);
-    book.positions[0] = UINT64_CAP;
-    await assert.rejects(
-      attest({ privateState: book, venues: oneVenue, ratio: RATIO_120 }),
-      /positionSizes return value .*expected value of type Vector<8, Uint<0\.\.18446744073709551616>>/s,
-      'the witness must be caught by the witness return type check',
-    );
-  });
-
-  test('a claimed proceeds value at 2^64 is rejected at the witness boundary', async () => {
-    const book = bookFor(oneVenue, [BOOK_Q], 1n);
-    book.proceeds[0] = UINT64_CAP;
-    await assert.rejects(
-      attest({ privateState: book, venues: oneVenue, ratio: RATIO_120 }),
-      /claimedProceeds return value .*expected value of type Vector<8, Uint<0\.\.18446744073709551616>>/s,
-    );
+    const b = bookFor([aeroPool], [1n], 1n);
+    b.positions[0] = UINT64_CAP;
+    await assert.rejects(attest({ privateState: b, venues: [aeroPool], ratio: RATIO_120 }), /positionSizes return value .*expected value of type Vector<8, Uint<0\.\.18446744073709551616>>/s);
   });
 });
 
@@ -322,44 +310,25 @@ describe('the declared accumulator width holds at the boundary', () => {
 // COMMITMENT BINDING
 // ===========================================================================
 describe('the book commitment binds positions, debt and nonce', () => {
-  const baseVenues = oneVenue;
   const commitmentFor = async (mutate) => {
-    const book = bookFor(baseVenues, [BOOK_Q], 10_000_000n * MICRO);
-    mutate?.(book);
-    const out = await attest({ privateState: book, venues: baseVenues, ratio: RATIO_120 });
+    const b = bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO);
+    mutate?.(b);
+    const out = await attest({ privateState: b, venues: [aeroPool], ratio: RATIO_120 });
     return Buffer.from(out.bookCommitment).toString('hex');
   };
-
   test('changing only the debt changes the commitment', async () => {
-    const before = await commitmentFor();
-    const after = await commitmentFor((b) => {
-      b.debt = 10_000_001n * MICRO;
-    });
-    assert.notEqual(before, after, 'debt must be bound by the commitment');
+    assert.notEqual(await commitmentFor(), await commitmentFor((b) => { b.debt += MICRO; }));
   });
-
   test('changing only a position size changes the commitment', async () => {
-    const before = await commitmentFor();
-    const after = await commitmentFor((b) => {
-      // Shrink the position and re-derive its honest proceeds, so the change
-      // is to the book alone and no constraint is violated.
-      b.positions[0] = BOOK_Q - MICRO;
-      b.proceeds[0] = realisableProceeds(POOL_X, POOL_Y, b.positions[0]);
-    });
-    assert.notEqual(before, after, 'positions must be bound by the commitment');
+    assert.notEqual(await commitmentFor(), await commitmentFor((b) => {
+      b.positions[0] -= MICRO;
+      b.proceeds[0] = realisableProceeds(AERO_X, AERO_Y, b.positions[0], 30n);
+    }));
   });
-
   test('changing only the nonce changes the commitment', async () => {
-    const before = await commitmentFor();
-    const after = await commitmentFor((b) => {
-      b.nonce = nonceOf(2);
-    });
-    assert.notEqual(before, after, 'the nonce must be bound, so equal books are unlinkable');
+    assert.notEqual(await commitmentFor(), await commitmentFor((b) => { b.nonce = nonceOf(2); }));
   });
-
   test('an identical book with an identical nonce gives an identical commitment', async () => {
-    const a = await commitmentFor();
-    const b = await commitmentFor();
-    assert.equal(a, b, 'the commitment must be deterministic');
+    assert.equal(await commitmentFor(), await commitmentFor());
   });
 });

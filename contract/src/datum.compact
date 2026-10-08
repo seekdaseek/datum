@@ -3,159 +3,212 @@ pragma language_version 0.23;
 import CompactStandardLibrary;
 
 // ===========================================================================
-// datum — realisable-value solvency attestation
+// datum v2 — realisable-value solvency attestation, with venue provenance
+// and a chained attestation history
 // ===========================================================================
 //
 // Proves: the depth-adjusted realisable value of a private lending book covers
 // its private debt at a PUBLIC required collateral ratio, against PUBLIC venue
-// reserves. Publishes the verdict and the public inputs. Publishes no position.
+// reserves that are bound to a specific on-chain pool event. Publishes the
+// verdict, the venue provenance and the history. Publishes no position.
+//
+// What changed since v1 (Wave 1):
+//   1. Venues carry provenance. Each slot names an EVM chain, a constant-
+//      product pool, the Sync log its reserves came from (block, tx, log
+//      index), and a reference block. All of it is a public input and is
+//      written to the ledger, so a verifier re-fetches that exact log.
+//   2. Freshness is enforced by the Midnight ledger, not trusted. The circuit
+//      asserts, through kernel block-time queries in the public transcript,
+//      that the attestation lands within maxRefAge seconds after the
+//      reference block's timestamp.
+//   3. The swap fee is in the bound. v1 used Y*q/(X+q), which ignores the
+//      pool fee and therefore let a prover claim slightly more than a real
+//      sale returns. v2 uses the exact constant-product-with-fee output.
+//   4. The same pool cannot be listed twice. Splitting one sale across two
+//      copies of the same pool would undercount price impact, so active
+//      slots must name distinct (chain, pool) pairs.
+//   5. Only the registered attestor can attest, and every attestation is
+//      chained to the previous one: its commitment includes the previous
+//      head and the period number, and the circuit requires the attestor to
+//      prove knowledge of the previous period's opening.
 //
 // ---------------------------------------------------------------------------
 // SCALE CONVENTION
 // ---------------------------------------------------------------------------
-// Every quantity entering this contract is normalised to MICRO-UNITS (1e-6 of
-// one whole token) before it is passed in. Raw token base units are NOT
-// accepted: an 18-decimal token at any realistic pool size overflows the
-// budget below, and mixing decimal conventions across venues silently corrupts
-// the comparison. Normalisation is the caller's job and is checked by the
-// venue-array hash, which pins the exact numbers a verifier must recompute.
+// Quantities are MICRO-UNITS (1e-6 of one whole token), normalised off-chain
+// from raw token units with the token's decimals. The verifier repeats the
+// normalisation from the raw Sync log, so the rule is fixed and conservative:
+//   reserveX (collateral side) = ceil (raw * 1e6 / 10^decX)   -> rounds UP
+//   reserveY (quote side)      = floor(raw * 1e6 / 10^decY)   -> rounds DOWN
+// Rounding X up and Y down can only understate proceeds, never overstate.
+// Normalised quantities are capped at 2^64 (~1.8e13 whole tokens).
 //
-// Normalised quantities are capped at 2^64. That is ~1.8e19 micro-units, i.e.
-// ~1.8e13 whole tokens, which is above any real pool reserve or book size.
+// The quote side of every active slot must be a USD stablecoin, so proceeds
+// are in USD micro-units and sum directly against a USD debt. Multi-hop exits
+// (collateral -> WETH -> USDC) are out of scope for v2 and stated as such.
 //
-// RATIO_SCALE = 1_000_000. requiredRatio is the collateral ratio times
-// RATIO_SCALE, so 1.20x is stored as 1_200_000.
-//
-// ---------------------------------------------------------------------------
-// OVERFLOW BUDGET — derived, not guessed
-// ---------------------------------------------------------------------------
-// Compact's Uint<n> is Uint<0..2^n> with an EXCLUSIVE upper bound, so a value
-// of type Uint<64> has maximum 2^64 - 1. Arithmetic widens the result type
-// automatically and the compiler enforces the exact declared width, so every
-// intermediate below is sized from its true maximum:
-//
-//   q_i, X_i, Y_i, p_i, debt   <  2^64            (capped by convention above)
-//   X_i + q_i                  <  2^65
-//   p_i * (X_i + q_i)          <  2^129           per-slot LHS
-//   Y_i * q_i                  <  2^128           per-slot RHS
-//   sum(p_i) over 8 slots      <  2^67            (8 = 2^3 slots)
-//   sum(p_i) * RATIO_SCALE     <  2^87            (RATIO_SCALE < 2^20)
-//   debt * requiredRatio       <  2^128           overall RHS
-//
-// The widest intermediate is 2^129. Accumulators are declared Uint<136> —
-// seven bits of headroom over the worst case, so a future change to SLOTS or
-// to RATIO_SCALE does not silently sit on the boundary. The compiler's own
-// limit is a maximum Uint value of 2^248 - 1, so 136 bits is well inside it.
+// RATIO_SCALE = 1_000_000. requiredRatio is the ratio times RATIO_SCALE.
 //
 // ---------------------------------------------------------------------------
-// PUBLIC / PRIVATE SPLIT
+// OVERFLOW BUDGET
 // ---------------------------------------------------------------------------
-// PUBLIC  (circuit parameters, written to the ledger, independently
-//          recomputable): venue reserves per slot, venue identifier, block
-//          height, required collateral ratio.
-// PRIVATE (witness, never disclosed): position sizes, debt, claimed proceeds
-//          lower bounds, commitment nonce.
+// Uint<n> is Uint<0..2^n> with an EXCLUSIVE upper bound. FEE_SCALE = 10000.
 //
-// Venue depth is on-chain state. It is a public input on purpose: if the
-// prover supplied it privately, the verdict would rest on numbers no verifier
-// could check.
+//   q, X, Y, p, debt                < 2^64
+//   g = FEE_SCALE - feeBps           < 2^14
+//   X * FEE_SCALE                    < 2^78
+//   q * g                            < 2^78
+//   X * FEE_SCALE + q * g            < 2^79
+//   p * (X * FEE_SCALE + q * g)      < 2^143   per-slot LHS, widest term
+//   Y * q * g                        < 2^142   per-slot RHS
+//   sum(p) over 8 slots              < 2^67
+//   sum(p) * RATIO_SCALE             < 2^87
+//   debt * requiredRatio             < 2^128
+//
+// Per-slot accumulators are Uint<160>: 17 bits over the widest term. The
+// compiler's ceiling is Uint<248>.
+//
+// ---------------------------------------------------------------------------
+// WHAT THE CIRCUIT CANNOT CHECK, AND WHO DOES
+// ---------------------------------------------------------------------------
+// A Midnight circuit cannot read another chain. Three provenance facts are
+// therefore checked by the verifier against a public RPC, using the values
+// this contract binds and publishes:
+//   (a) the log at (syncBlock, logIndex) in syncTx is a Sync from `pool`, and
+//       its raw reserves normalise to exactly reserveX / reserveY;
+//   (b) there is no later Sync from `pool` in (syncBlock:logIndex, refBlock],
+//       so the reserves are the pool's state AT refBlock, not a deeper past
+//       state picked on purpose;
+//   (c) refTime is the timestamp of refBlock.
+// The circuit enforces the parts that need no other chain: refTime is in the
+// past and within maxRefAge of Midnight block time at inclusion; pools are
+// distinct; fees are in range; padding contributes nothing.
 // ===========================================================================
 
-// One venue slot's PUBLIC state. Eight of these form the attestation's public
-// depth picture. blockHeight pins the reserves to a checkable moment so a
-// verifier can fetch the same pool at the same height and get the same X, Y.
+// One venue slot's PUBLIC state, provenance included.
+//
+// A slot is ACTIVE when chainId != 0. Padding slots use chainId 0 and must
+// carry zero claimed proceeds.
 export struct VenueSlot {
-  venueId: Bytes<32>;
-  reserveX: Uint<64>;
-  reserveY: Uint<64>;
-  blockHeight: Uint<64>;
+  chainId: Uint<64>;          // EIP-155 chain id (1 Ethereum, 8453 Base)
+  pool: Bytes<20>;            // constant-product pool contract
+  collateralIsToken0: Boolean;// which side of the pool the book sells
+  decX: Uint<8>;              // decimals of the collateral token
+  decY: Uint<8>;              // decimals of the quote stablecoin
+  feeBps: Uint<16>;           // pool swap fee in basis points
+  syncBlock: Uint<64>;        // block of the Sync log the reserves come from
+  syncTx: Bytes<32>;          // transaction hash containing that log
+  logIndex: Uint<32>;         // index of that log within its block
+  refBlock: Uint<64>;         // reserves are claimed to be current AT this block
+  refTime: Uint<64>;          // unix timestamp of refBlock
+  reserveX: Uint<64>;         // collateral reserve, micro-units, rounded up
+  reserveY: Uint<64>;         // quote reserve, micro-units, rounded down
+}
+
+// The preimage of the book commitment. Including the previous head and the
+// period makes the commitments a hash chain: a past attestation cannot be
+// replaced, reordered or replayed at another period without breaking every
+// later link.
+struct BookPreimage {
+  positions: Vector<8, Uint<64>>;
+  debt: Uint<64>;
+  prev: Bytes<32>;
+  period: Uint<64>;
+}
+
+// The previous period's opening, supplied privately so the circuit can check
+// the attestor still holds it. A lender who committed to an unopenable book
+// cannot attest the next period.
+export struct PrevOpening {
+  positions: Vector<8, Uint<64>>;
+  debt: Uint<64>;
+  nonce: Bytes<32>;
+}
+
+// One period's public summary. Kept forever; the contract has no circuit that
+// removes or rewrites an entry.
+export struct AttestationRecord {
+  commitment: Bytes<32>;
+  prev: Bytes<32>;
+  venuesHash: Bytes<32>;
+  requiredRatio: Uint<64>;
+  covered: Boolean;
+  attestedAt: Uint<64>;
 }
 
 // ---------------------------------------------------------------------------
 // LEDGER — public state
 // ---------------------------------------------------------------------------
 
-// Number of attestations published. Monotonic, so a consumer can tell a fresh
-// attestation from a replayed one.
+// Number of attestations. Also the next period number.
 export ledger attestationCount: Counter;
 
-// Commitment to the private book: positions + debt + nonce. Binds this
-// attestation to one specific book without revealing it. The nonce prevents
-// two attestations over the same book being linked by an equal commitment.
+// hash(domain, attestorSecret). Only the holder of the secret can attest.
+export ledger attestor: Bytes<32>;
+
+// Maximum seconds between the reference block's timestamp and inclusion on
+// Midnight. Fixed at deployment.
+export ledger maxRefAge: Uint<32>;
+
+// Chain head: the latest commitment, and the one before it (needed to
+// recompute the previous commitment for the continuity check).
+export ledger head: Bytes<32>;
+export ledger prevHead: Bytes<32>;
+
+// Latest attestation, flattened for cheap reads.
 export ledger bookCommitment: Bytes<32>;
-
-// The venue state actually used by the proof, in the clear, so anyone can
-// recheck it against the chain.
 export ledger venues: Vector<8, VenueSlot>;
-
-// Hash over the whole venue array, so a verifier recomputes one value and
-// compares once rather than walking eight slots field by field.
 export ledger venuesHash: Bytes<32>;
-
-// Required collateral ratio, scaled by RATIO_SCALE (1.20x -> 1_200_000).
-// PUBLIC and fixed at attestation time. Never prover-chosen.
 export ledger requiredRatio: Uint<64>;
-
-// The verdict. True iff realisable proceeds cleared debt * requiredRatio.
 export ledger covered: Boolean;
-
-// Attestation time, Unix seconds.
 export ledger attestedAt: Uint<64>;
 
-// ---------------------------------------------------------------------------
-// WITNESS — private state, never disclosed
-// ---------------------------------------------------------------------------
-
-// Size to be sold into each venue slot, micro-units. Unused slots are zero.
-witness positionSizes(): Vector<8, Uint<64>>;
-
-// Claimed LOWER BOUND on proceeds from each slot, micro-units. The circuit
-// enforces p_i * (X_i + q_i) <= Y_i * q_i, so an overclaim fails the proof and
-// an underclaim only makes the book look worse than it is.
-witness claimedProceeds(): Vector<8, Uint<64>>;
-
-// Total debt the book must cover, micro-units.
-witness debtAmount(): Uint<64>;
-
-// Commitment nonce. Must never be reused across attestations.
-witness commitmentNonce(): Bytes<32>;
+// Every period, keyed by period number.
+export ledger history: Map<Uint<64>, AttestationRecord>;
 
 // ---------------------------------------------------------------------------
-// COMMITMENT PREIMAGE
+// WITNESSES — private state, never disclosed
 // ---------------------------------------------------------------------------
-// The book commitment binds positions AND debt together in a single preimage,
-// with the nonce supplied as the commitment randomness. Binding all three
-// matters: a commitment over positions alone would stay stable while the
-// prover swapped the debt figure between attestations, and a commitment
-// without the nonce would let two attestations over the same book be linked
-// by an equal commitment.
-struct BookPreimage {
-  positions: Vector<8, Uint<64>>;
-  debt: Uint<64>;
+
+witness positionSizes(): Vector<8, Uint<64>>;   // collateral sold per slot
+witness claimedProceeds(): Vector<8, Uint<64>>; // claimed lower bound per slot
+witness debtAmount(): Uint<64>;                 // USD micro-units
+witness commitmentNonce(): Bytes<32>;           // fresh per period
+witness attestorSecret(): Bytes<32>;            // the attestor's key
+witness previousOpening(): PrevOpening;         // last period's opening
+
+// ---------------------------------------------------------------------------
+// PURE HELPERS — exported so a verifier recomputes them with public data only
+// ---------------------------------------------------------------------------
+
+export pure circuit venueDigest(venueState: Vector<8, VenueSlot>): Bytes<32> {
+  return persistentHash<Vector<8, VenueSlot>>(venueState);
+}
+
+export pure circuit attestorKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "datum:attestor:v2"), sk]);
+}
+
+pure circuit isActive(slot: VenueSlot): Boolean {
+  return slot.chainId != 0;
 }
 
 // ---------------------------------------------------------------------------
-// VENUE DIGEST
+// CONSTRUCTOR
 // ---------------------------------------------------------------------------
-// Exported as a pure circuit so a verifier can recompute the digest in
-// TypeScript from public data alone and compare it against venuesHash in one
-// step. The preimage is the whole Vector<8, VenueSlot> in slot order, each
-// slot in declared field order: venueId, reserveX, reserveY, blockHeight.
-// It covers the identifiers and block heights, not just the reserves — a
-// digest over reserves alone would let the same numbers be re-attributed to a
-// different pool or a different height.
-export pure circuit venueDigest(venueState: Vector<8, VenueSlot>): Bytes<32> {
-  return persistentHash<Vector<8, VenueSlot>>(venueState);
+
+constructor(refAge: Uint<32>) {
+  assert(refAge > 0, "datum: maxRefAge must be positive");
+  // DISCLOSE: the attestor key is a hash of a secret, published so that
+  // every later attestation can be checked against it. The secret is not.
+  attestor = disclose(attestorKey(attestorSecret()));
+  // DISCLOSE: a public deployment parameter.
+  maxRefAge = disclose(refAge);
 }
 
 // ---------------------------------------------------------------------------
 // THE ATTESTATION
 // ---------------------------------------------------------------------------
-// Public inputs are circuit parameters. Private inputs arrive via witnesses.
-// The circuit hard-asserts the per-slot realisability constraints and then
-// COMPUTES the coverage verdict — it does not assert coverage. An insolvent
-// book still produces a valid attestation; it produces one that says NOT
-// COVERED. That is the point: the artefact is a measurement, not a gate.
 export circuit attest(
   venueState: Vector<8, VenueSlot>,
   ratio: Uint<64>,
@@ -166,79 +219,135 @@ export circuit attest(
   const debt = debtAmount();
   const nonce = commitmentNonce();
 
-  // The bar must be a real bar. A zero ratio would make every book "covered".
+  // DISCLOSE: venueState is a public input — on-chain pool state plus the
+  // coordinates of the log it came from — and it is written to the ledger
+  // below. Disclosing it here, before any branch on it, is required because
+  // whether a slot is active decides which kernel block-time queries run,
+  // and those queries are visible in the public transcript.
+  const vs = disclose(venueState);
+
+  // --- who may attest ------------------------------------------------------
+  assert(attestor == attestorKey(attestorSecret()), "datum: caller is not the registered attestor");
+
   assert(ratio > 0, "datum: requiredRatio must be positive");
 
-  for (const i of 0..8) {
-    const slot = venueState[i];
+  // --- the attestation time is Midnight's, not the caller's ----------------
+  // attestedAt must be within 10 minutes of the block time at inclusion.
+  const ts = disclose(timestamp);
+  assert(ts > 600, "datum: timestamp out of range");
+  assert(blockTimeGt((ts - 600) as Uint<64>), "datum: attestedAt is too far in the future");
+  assert(blockTimeLt((ts + 600) as Uint<64>), "datum: attestedAt is too far in the past");
 
-    // SOUNDNESS: X > 0 and Y > 0 are required on EVERY slot, padding
-    // included, and they are not decoration.
-    //
-    // The per-slot constraint below is p*(X+q) <= Y*q. On a padding slot
-    // (q = 0) it reduces to p*X <= 0, which forces p = 0 only while X > 0.
-    // If X were also allowed to be 0 the constraint would read 0 <= 0, which
-    // holds for every p — and an unused slot could then claim unbounded
-    // proceeds and carry an insolvent book over the line. Y > 0 closes the
-    // mirror case where a slot contributes proceeds from a pool with nothing
-    // in it to sell into.
+  const age = maxRefAge;
+
+  for (const i of 0..8) {
+    const slot = vs[i];
+
+    // SOUNDNESS (carried from v1): X > 0 and Y > 0 on EVERY slot, padding
+    // included. With q = 0 the per-slot bound reduces to p*X*FEE_SCALE <= 0,
+    // which pins p to 0 only while X > 0.
     assert(slot.reserveX > 0, "datum: reserveX must be positive in every slot, padding included");
     assert(slot.reserveY > 0, "datum: reserveY must be positive in every slot, padding included");
+    assert(slot.feeBps < 10000, "datum: feeBps must be below 10000");
 
-    // Realisable proceeds from selling q into constant-product reserves are
-    // Y*q/(X+q). There is no division in a circuit, so the prover supplies p
-    // as a claimed lower bound and the circuit checks the cross-multiplied
-    // inequality instead. Overclaiming p fails here; underclaiming it only
-    // makes the book look worse than it is.
-    //
-    // Accumulators are annotated at Uint<136> so the width is visible at the
-    // point of use rather than inferred silently: p*(X+q) < 2^129 and
-    // Y*q < 2^128, both inside 136 bits with headroom to spare.
-    const lhs: Uint<136> = p[i] * (slot.reserveX + q[i]);
-    const rhs: Uint<136> = slot.reserveY * q[i];
+    if (isActive(slot)) {
+      // FRESHNESS, enforced by the ledger: the reference block's timestamp
+      // is in the past, and inclusion happens within maxRefAge of it. These
+      // are kernel queries in the public transcript, re-evaluated by the
+      // node against the real block, so a prover cannot fake them.
+      const rt = slot.refTime;
+      assert(slot.refBlock >= slot.syncBlock, "datum: refBlock precedes the Sync it vouches for");
+      assert(blockTimeGt(rt), "datum: reference block is in the future");
+      assert(blockTimeLt((rt + age) as Uint<64>), "datum: reference block is older than maxRefAge");
+
+      // DISTINCT POOLS: listing one pool twice would let a sale be split
+      // across two copies of the same depth and undercount its price impact.
+      for (const j of 0..8) {
+        if (j != i) {
+          const other = vs[j];
+          assert(
+            !(isActive(other) && other.chainId == slot.chainId && other.pool == slot.pool),
+            "datum: the same pool is listed in two slots"
+          );
+        }
+      }
+    } else {
+      // PADDING contributes nothing. Belt and braces with the X > 0 rule.
+      assert(p[i] == 0, "datum: a padding slot cannot claim proceeds");
+    }
+
+    // REALISABLE PROCEEDS WITH FEE. Selling q into (X, Y) with fee f returns
+    //   Y * q * g / (X * FEE_SCALE + q * g),   g = FEE_SCALE - f.
+    // The prover supplies p as a claimed lower bound; the circuit checks the
+    // cross-multiplied form. Overclaiming fails here.
+    const g = (10000 - slot.feeBps) as Uint<16>;
+    const lhs: Uint<160> = p[i] * (slot.reserveX * 10000 + q[i] * g);
+    const rhs: Uint<160> = slot.reserveY * q[i] * g;
     assert(lhs <= rhs, "datum: claimed proceeds exceed realisable proceeds for this slot");
   }
 
-  // Summed term by term rather than folded with a downcast. A fold into a
-  // fixed-width accumulator would need an `as` on each step, and every such
-  // downcast is a run-time failure path that has nothing to do with the
-  // property being proved. Written out, the compiler infers the exact width:
-  // eight values each under 2^64 sum to under 2^67.
   const proceeds = p[0] + p[1] + p[2] + p[3] + p[4] + p[5] + p[6] + p[7];
-
-  // The coverage test, scale-corrected. proceeds is in micro-units; ratio is
-  // scaled by RATIO_SCALE = 1_000_000 (150% is 1_500_000). Multiplying the
-  // left side by RATIO_SCALE puts both sides in the same scale without
-  // dividing. LHS < 2^87, RHS < 2^128.
   const isCovered = proceeds * 1000000 >= debt * ratio;
 
-  attestationCount.increment(1);
+  // --- the chain -----------------------------------------------------------
+  const period = attestationCount.read();
+  const currentHead = head;
 
-  // DISCLOSE: the commitment is a hiding commitment over the private book.
-  // What goes public is persistentCommit(positions, debt, nonce), not the
-  // book. This is the intended binding artefact — it lets a later attestation
-  // be checked against the same book without revealing it.
-  bookCommitment = disclose(persistentCommit<BookPreimage>(
-    BookPreimage { positions: q, debt: debt }, nonce));
+  // CONTINUITY: from the second period on, the attestor proves knowledge of
+  // the previous period's opening, privately. The opening never leaves the
+  // circuit; only the fact that it matches the published head does.
+  const prevOpen = previousOpening();
+  if (period > 0) {
+    const reopened = persistentCommit<BookPreimage>(
+      BookPreimage {
+        positions: prevOpen.positions,
+        debt: prevOpen.debt,
+        prev: prevHead,
+        period: (period - 1) as Uint<64>
+      },
+      prevOpen.nonce
+    );
+    assert(reopened == currentHead, "datum: previous period's opening does not match the chain head");
+  }
 
-  // DISCLOSE: venueState is a public input. Venue reserves, identifiers and
-  // block heights are on-chain state that anyone can already read; publishing
-  // them is what makes the attestation recheckable.
-  venues = disclose(venueState);
+  // DISCLOSE: a hiding commitment over the private book, chained to the
+  // previous head and the period number. What goes public is the commitment,
+  // not the book.
+  const commitment = disclose(persistentCommit<BookPreimage>(
+    BookPreimage { positions: q, debt: debt, prev: currentHead, period: period },
+    nonce
+  ));
 
-  // DISCLOSE: a digest of the public venue array above. Public in, public out.
-  venuesHash = disclose(venueDigest(venueState));
+  const vh = venueDigest(vs);
+
+  // DISCLOSE: the verdict — one bit derived from private p and debt, and the
+  // single deliberate leak of the contract. The book, the debt and the
+  // per-slot proceeds stay private.
+  const verdict = disclose(isCovered);
 
   // DISCLOSE: the required ratio is public and fixed at attestation time.
-  // Publishing it is what stops the prover from choosing the bar afterwards.
-  requiredRatio = disclose(ratio);
+  const r = disclose(ratio);
 
-  // DISCLOSE: the verdict. This is one bit derived from the private p and
-  // debt, and it is the single deliberate leak in the contract — the entire
-  // product is this bit. Everything the bit is computed from stays private:
-  // the book, the debt, and the per-slot proceeds are never written out.
-  covered = disclose(isCovered);
+  prevHead = currentHead;
+  head = commitment;
+  bookCommitment = commitment;
+  venues = vs;
+  venuesHash = vh;
+  requiredRatio = r;
+  covered = verdict;
+  attestedAt = ts;
 
-  // DISCLOSE: the attestation timestamp is a public input.
-  attestedAt = disclose(timestamp);
+  history.insert(
+    period,
+    AttestationRecord {
+      commitment: commitment,
+      prev: currentHead,
+      venuesHash: vh,
+      requiredRatio: r,
+      covered: verdict,
+      attestedAt: ts
+    }
+  );
+
+  attestationCount.increment(1);
 }
