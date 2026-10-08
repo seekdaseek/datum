@@ -5,7 +5,8 @@
 // with hard limits, and stays visible and restartable in PM2:
 //
 //   MemoryMax       hard ceiling, sized from measured peaks plus margin
-//                   (Mac, 4-slot k=15 circuit: prover 532 MB, service 235 MB)
+//                   (prover 454 MB on the VPS; service 803 MB restoring the
+//                   Preprod sponsor wallet, about 430 MB once synced)
 //   MemorySwapMax=0 datum never pushes live services into swap
 //   CPUQuota=100%   at most one core each
 //   nice 10         the scheduler favours every other process on the box
@@ -52,7 +53,9 @@ module.exports = {
       name: 'datum-api',
       script: '/usr/bin/systemd-run',
       interpreter: 'none',
-      args: [...SCOPE('512M'), '--', ...HARDEN, '/usr/bin/node', '/opt/datum/service/server.mjs'],
+      // 1G: restoring the Preprod sponsor wallet from its checkpoint peaks at
+      // 803 MB RSS (measured on the Mac, 2026-10-08), then settles near 430 MB.
+      args: [...SCOPE('1G'), '--', ...HARDEN, '/usr/bin/node', '/opt/datum/service/server.mjs'],
       cwd: '/opt/datum',
       env: {
         SERVICE_ENV: '/opt/datum/service/.env.service',
