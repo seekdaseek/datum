@@ -35,10 +35,10 @@ const assertEnvIgnored = () => {
 };
 
 /** Read one key out of .env, or null. Never logs the value. */
-const readEnvValue = (key) => {
-  if (!existsSync(ENV_PATH)) return null;
+const readEnvValue = (key, file = ENV_PATH) => {
+  if (!existsSync(file)) return null;
   const re = new RegExp(`^\\s*${key}\\s*=\\s*(.+?)\\s*$`);
-  for (const line of readFileSync(ENV_PATH, 'utf8').split('\n')) {
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
     const m = re.exec(line);
     if (m) return m[1];
   }
@@ -46,11 +46,11 @@ const readEnvValue = (key) => {
 };
 
 /** Append one key to .env at mode 0600. The value is never returned to a logger. */
-const appendEnvValue = (key, value) => {
-  const existing = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8') : '';
+const appendEnvValue = (key, value, file = ENV_PATH) => {
+  const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
   const body = existing && !existing.endsWith('\n') ? existing + '\n' : existing;
-  writeFileSync(ENV_PATH, `${body}${key}=${value}\n`, { mode: 0o600 });
-  chmodSync(ENV_PATH, 0o600);
+  writeFileSync(file, `${body}${key}=${value}\n`, { mode: 0o600 });
+  chmodSync(file, 0o600);
 };
 
 /**
@@ -59,14 +59,17 @@ const appendEnvValue = (key, value) => {
  * belongs in source, and a hardcoded store password makes the store's
  * encryption worthless the moment the repo is public.
  */
-export const ensureEnvSecret = (key, generate) => {
+export const ensureEnvSecret = (key, generate, file = ENV_PATH) => {
   assertEnvIgnored();
-  const found = readEnvValue(key);
+  const found = readEnvValue(key, file);
   if (found !== null) return { value: found, generated: false };
   const value = generate();
-  appendEnvValue(key, value);
+  appendEnvValue(key, value, file);
   return { value, generated: true };
 };
+
+/** The sponsor wallet's seed lives in its own file, never alongside WALLET_SEED. */
+export const SPONSOR_ENV = resolve(ROOT, '.env.sponsor');
 
 /**
  * The private-state-store password. levelPrivateStateProvider requires 16+

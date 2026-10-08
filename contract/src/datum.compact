@@ -155,6 +155,15 @@ export ledger maxRefAge: Uint<32>;
 export ledger head: Bytes<32>;
 export ledger prevHead: Bytes<32>;
 
+// The period number the current head was committed at. Read back by the
+// continuity check instead of computing `period - 1`: Compact evaluates BOTH
+// sides of a conditional in the ZK circuit, so `period - 1` at period 0 wraps
+// to r - 1 in the scalar field and reaches the hash as a malformed Uint<64>.
+// The JS simulator skips the untaken branch and never sees it; the proof
+// server rejects it ("Inputs did not match alignment"). Found on the local
+// chain, 2026-10-08.
+export ledger headPeriod: Uint<64>;
+
 // Latest attestation, flattened for cheap reads.
 export ledger bookCommitment: Bytes<32>;
 export ledger venues: Vector<8, VenueSlot>;
@@ -303,7 +312,7 @@ export circuit attest(
         positions: prevOpen.positions,
         debt: prevOpen.debt,
         prev: prevHead,
-        period: (period - 1) as Uint<64>
+        period: headPeriod
       },
       prevOpen.nonce
     );
@@ -330,6 +339,7 @@ export circuit attest(
 
   prevHead = currentHead;
   head = commitment;
+  headPeriod = period;
   bookCommitment = commitment;
   venues = vs;
   venuesHash = vh;

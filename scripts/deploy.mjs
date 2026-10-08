@@ -1,29 +1,34 @@
+#!/usr/bin/env node
 //
-// scripts/deploy.mjs — deploy datum and publish one real attestation.
+// scripts/deploy.mjs — datum v2: one process, every write.
 //
-// Network is chosen entirely by scripts/config.mjs:
-//   node scripts/deploy.mjs --network undeployed
-//   node scripts/deploy.mjs --network preview
-// Nothing else in this file is network-specific.
+//   node scripts/deploy.mjs --network preprod [--sync-only] [--book moonwell-aero]
+//                           [--book-address <hex>] [--skip-demo] [--sponsor-night <n>]
 //
-import { WebSocket } from 'ws';
-globalThis.WebSocket = WebSocket;
+// Wallet sync is the dominant cost of every write on a public network (about
+// two hours on Preprod), so everything that needs a synced wallet happens in
+// this one process, in this order:
+//
+//   1. open the wallet, restoring from a checkpoint if one exists; sync;
+//      checkpoint immediately
+//   2. make sure NIGHT is registered for DUST and DUST is spendable
+//   3. deploy the BOOK contract (unless --book-address is given)
+//   4. build the book against a reference block taken NOW, after the sync,
+//      so the reserves are fresh when the proof lands — then attest it
+//   5. deploy the DEMO contract that the hosted "Attest a book" flow writes to
+//   6. send NIGHT to the sponsor wallet that will pay DUST for that flow
+//   7. checkpoint again and write deployments/<network>.json (public data only)
+//
+// Secrets: WALLET_SEED, BOOK_ATTESTOR_SECRET, DEMO_ATTESTOR_SECRET and
+// PRIVATE_STATE_PASSWORD come from .env; SPONSOR_SEED from .env.sponsor. None
+// is printed. The book's private state (positions, debt, nonce) is kept by the
+// encrypted level private-state provider so the next period can prove it
+// still holds this one's opening.
+//
+import { randomBytes } from 'node:crypto';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-import * as Rx from 'rxjs';
-import {
-  WalletFacade,
-  ShieldedWallet,
-  UnshieldedWallet,
-  DustWallet,
-  PublicKey,
-  DustAddress,
-  MidnightBech32m,
-  NoOpTransactionHistoryStorage,
-  Roles,
-} from '@midnightntwrk/wallet-sdk';
-import * as ledger from '@midnight-ntwrk/midnight-js-protocol/ledger';
-import { unshieldedToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
-import { getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
@@ -31,289 +36,180 @@ import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 
-import { resolve } from 'node:path';
 import { applyNetwork } from './config.mjs';
-import { ensureSeed, ensureStorePassword, deriveKeys, unshieldedKeystoreFor, ROOT, die } from './seed.mjs';
-
-import { Contract } from '../build/datum-full/contract/index.js';
+import { ensureEnvSecret, ensureStorePassword, ROOT, die } from './seed.mjs';
+import {
+  openWallet, saveCheckpoint, waitSynced, nightBalance, dustBalance,
+  registerDustIfNeeded, waitForDust, transferNight, walletProviderFor, closeWallet, log,
+} from './wallet-lib.mjs';
+import { buildMoonwellAeroBook } from './books/moonwell-aero.mjs';
+import { Contract, ledger } from '../build/datum-full/contract/index.js';
 
 const NET = applyNetwork();
+const arg = (k, d) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : d; };
+const flag = (k) => process.argv.includes(k);
+
 const ZK_DIR = resolve(ROOT, 'build/datum-full');
-const MICRO = 1_000_000n;
-const log = (...a) => console.log(...a);
+const STATE = resolve(ROOT, `state/${NET.id}-wallet_seed.json`);
+const MAX_REF_AGE = 21_600n; // six hours
+const SLOTS = 8;
+
+const hex = (u) => Buffer.from(u).toString('hex');
+const randomSecret = () => randomBytes(32).toString('hex');
+const bytes = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
+const t0 = Date.now();
+const stamp = () => `[${((Date.now() - t0) / 60000).toFixed(1)}m]`;
 
 // ---------------------------------------------------------------------------
-// The book being attested. Private — it never leaves this process.
-// Deliberately the headline case: solvent at oracle marks, insolvent at
-// realisable prices, so the attestation that lands on chain reads NOT COVERED.
+// witnesses — read the book from private state
 // ---------------------------------------------------------------------------
-const POOL_X = 1_000_000n * MICRO;
-const POOL_Y = 50_000_000n * MICRO;
-const BOOK_Q = 500_000n * MICRO;
-const DEBT = 20_000_000n * MICRO;
-const RATIO = 1_200_000n; // 120%, scaled by RATIO_SCALE = 1e6
-
-const pad = (xs, n = 8, fill = 0n) => [...xs, ...Array(n - xs.length).fill(fill)];
-const venueId = (b) => new Uint8Array(32).fill(b);
-const realisable = (X, Y, q) => (q === 0n ? 0n : (Y * q) / (X + q));
-
-const VENUES = pad(
-  [{ venueId: venueId(7), reserveX: POOL_X, reserveY: POOL_Y, blockHeight: 1n }],
-  8,
-  { venueId: venueId(0), reserveX: 1n, reserveY: 1n, blockHeight: 0n },
-);
-const POSITIONS = pad([BOOK_Q]);
-const PROCEEDS = POSITIONS.map((q, i) => realisable(VENUES[i].reserveX, VENUES[i].reserveY, q));
-
-const privateState = {
-  positions: POSITIONS,
-  proceeds: PROCEEDS,
-  debt: DEBT,
-  nonce: new Uint8Array(32).fill(1),
-};
-
+const emptyOpening = () => ({ positions: Array(SLOTS).fill(0n), debt: 0n, nonce: new Uint8Array(32) });
 const witnesses = {
   positionSizes: ({ privateState }) => [privateState, privateState.positions],
   claimedProceeds: ({ privateState }) => [privateState, privateState.proceeds],
   debtAmount: ({ privateState }) => [privateState, privateState.debt],
   commitmentNonce: ({ privateState }) => [privateState, privateState.nonce],
+  attestorSecret: ({ privateState }) => [privateState, privateState.attestorSecret],
+  previousOpening: ({ privateState }) => [privateState, privateState.prev ?? emptyOpening()],
 };
+const compiled = CompiledContract.make('datum', Contract).pipe(
+  CompiledContract.withWitnesses(witnesses),
+  CompiledContract.withCompiledFileAssets(ZK_DIR),
+);
 
-// ---------------------------------------------------------------------------
-// Wallet
-// ---------------------------------------------------------------------------
-const buildWallet = async () => {
-  const { seedHex } = ensureSeed();
-  const keys = deriveKeys(seedHex);
-  const unshieldedKeystore = unshieldedKeystoreFor(keys);
+const padding = () => ({
+  chainId: 0n, pool: new Uint8Array(20), collateralIsToken0: false, decX: 0n, decY: 0n, feeBps: 0n,
+  syncBlock: 0n, syncTx: new Uint8Array(32), logIndex: 0n, refBlock: 0n, refTime: 0n, reserveX: 1n, reserveY: 1n,
+});
+const pad8 = (xs, fill) => [...xs, ...Array(SLOTS - xs.length).fill(null).map(fill)];
 
-  const shieldedSecretKeys = ledger.ZswapSecretKeys.fromSeed(keys[Roles.Zswap]);
-  const dustSecretKey = ledger.DustSecretKey.fromSeed(keys[Roles.Dust]);
-
-  const indexerClientConnection = { indexerHttpUrl: NET.indexerHttp, indexerWsUrl: NET.indexerWs };
-  const shieldedConfig = {
-    networkId: getNetworkId(),
-    indexerClientConnection,
-    provingServerUrl: new URL(NET.proofServer),
-    relayURL: new URL(NET.node.replace(/^http/, 'ws')),
-  };
-  const unshieldedConfig = {
-    networkId: getNetworkId(),
-    indexerClientConnection,
-    txHistoryStorage: new NoOpTransactionHistoryStorage(),
-  };
-  const dustConfig = {
-    ...shieldedConfig,
-    costParameters: { additionalFeeOverhead: 300_000_000_000_000n, feeBlocksMargin: 5 },
-  };
-
-  const wallet = await WalletFacade.init({
-    configuration: { ...shieldedConfig, ...unshieldedConfig, ...dustConfig },
-    shielded: (cfg) => ShieldedWallet(cfg).startWithSecretKeys(shieldedSecretKeys),
-    unshielded: (cfg) =>
-      UnshieldedWallet(cfg).startWithPublicKey(PublicKey.fromKeyStore(unshieldedKeystore)),
-    dust: (cfg) =>
-      DustWallet(cfg).startWithSecretKey(dustSecretKey, ledger.LedgerParameters.initialParameters().dust),
-  });
-  await wallet.start(shieldedSecretKeys, dustSecretKey);
-
-  return { wallet, unshieldedKeystore, shieldedSecretKeys, dustSecretKey };
-};
-
-const registerDustIfNeeded = async (ctx) => {
-  const state = await ctx.wallet.waitForSyncedState();
-  const unregistered = state.unshielded.availableCoins.filter(
-    (c) => c.meta?.registeredForDustGeneration !== true,
-  );
-  if (unregistered.length === 0) {
-    log('DUST: all NIGHT already registered');
-    return;
-  }
-  log(`DUST: registering ${unregistered.length} NIGHT UTXO(s) for generation`);
-  const target = String(DustAddress.encodePublicKey(getNetworkId(), state.dust.publicKey));
-  const dustReceiver = MidnightBech32m.parse(target).decode(DustAddress, getNetworkId());
-  const recipe = await ctx.wallet.registerNightUtxosForDustGeneration(
-    unregistered,
-    ctx.unshieldedKeystore.getPublicKey(),
-    (payload) => ctx.unshieldedKeystore.signData(payload),
-    dustReceiver,
-  );
-  const finalized = await ctx.wallet.finalizeRecipe(recipe);
-  await ctx.wallet.submitTransaction(finalized);
-  log('DUST: registration submitted');
-};
-
-const waitForDust = async (ctx) => {
-  log('DUST: waiting for a spendable balance...');
-  const bal = await Rx.firstValueFrom(
-    ctx.wallet.state().pipe(
-      Rx.map((s) => s.dust.balance(new Date())),
-      Rx.filter((b) => b > 0n),
-      Rx.timeout({ each: 600_000 }),
-    ),
-  );
-  log(`DUST: balance ${bal}`);
-};
-
-// ---------------------------------------------------------------------------
-// Providers — the six required slots.
-// ---------------------------------------------------------------------------
-const buildProviders = (ctx) => {
-  const zkConfigProvider = new NodeZkConfigProvider(ZK_DIR);
-  const ttlOneHour = () => new Date(Date.now() + 3_600_000);
-  const walletAndMidnightProvider = {
-    getCoinPublicKey: () => ctx.shieldedSecretKeys.coinPublicKey,
-    getEncryptionPublicKey: () => ctx.shieldedSecretKeys.encryptionPublicKey,
-    balanceTx: async (tx, ttl = ttlOneHour()) => {
-      const recipe = await ctx.wallet.balanceUnboundTransaction(
-        tx,
-        { shieldedSecretKeys: ctx.shieldedSecretKeys, dustSecretKey: ctx.dustSecretKey },
-        { ttl },
-      );
-      return await ctx.wallet.finalizeRecipe(recipe);
-    },
-    submitTx: (tx) => ctx.wallet.submitTransaction(tx),
-  };
+const providersFor = (ctx, storeName) => {
+  const zk = new NodeZkConfigProvider(ZK_DIR);
+  const wm = walletProviderFor(ctx);
   return {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'datum-private-state',
-      signingKeyStoreName: 'datum-signing-keys',
-      // Read from .env, generated on first use. A hardcoded password here would
-      // make the store's encryption worthless the moment the repo is public.
+      privateStateStoreName: `${storeName}-private-state`,
+      signingKeyStoreName: `${storeName}-signing-keys`,
       privateStoragePasswordProvider: () => ensureStorePassword().value,
-      accountId: ctx.unshieldedKeystore.getBech32Address().asString(),
+      accountId: ctx.address,
     }),
     publicDataProvider: indexerPublicDataProvider(NET.indexerHttp, NET.indexerWs),
-    zkConfigProvider,
-    proofProvider: httpClientProofProvider(NET.proofServer, zkConfigProvider),
-    walletProvider: walletAndMidnightProvider,
-    midnightProvider: walletAndMidnightProvider,
+    zkConfigProvider: zk,
+    proofProvider: httpClientProofProvider(NET.proofServer, zk),
+    walletProvider: wm,
+    midnightProvider: wm,
   };
 };
+
+const txFields = (pub) => ({ txHash: pub.txHash, txIdentifier: pub.txId, block: pub.blockHeight, status: String(pub.status) });
 
 // ---------------------------------------------------------------------------
 const main = async () => {
-  log(`network: ${NET.id} (${NET.label})`);
-  log(`  node    ${NET.node}`);
-  log(`  indexer ${NET.indexerHttp}`);
-  log(`  proof   ${NET.proofServer}`);
+  log(`datum v2 deploy — network ${NET.id}`);
+  const { value: seedHex } = ensureEnvSecret('WALLET_SEED', () => die('WALLET_SEED missing'));
+  const { value: bookSecret } = ensureEnvSecret('BOOK_ATTESTOR_SECRET', randomSecret);
+  const { value: demoSecret } = ensureEnvSecret('DEMO_ATTESTOR_SECRET', randomSecret);
 
-  const ctx = await buildWallet();
-  log(`address: ${ctx.unshieldedKeystore.getBech32Address().asString()}`);
-
-  // Report sync progress rather than blocking silently. On a public network the
-  // wallet has millions of blocks to walk, and a silent wait is indistinguishable
-  // from a hang.
-  const progressSub = ctx.wallet.state().subscribe((st) => {
-    // FacadeState has no top-level syncProgress. Each sub-wallet carries its
-    // own SyncProgressData { appliedIndex, highestIndex, highestRelevantIndex,
-    // highestRelevantWalletIndex, isConnected }, and isSynced is the roll-up.
-    // The accessor is `progress`, not `syncProgress`, and it returns
-    // SyncProgressData { appliedIndex, highestIndex, highestRelevantIndex,
-    // highestRelevantWalletIndex, isConnected } — all bigint except isConnected.
-    const part = (name, ws) => {
-      const p = ws?.progress ?? ws?.syncProgress;
-      if (!p) return `${name}=?`;
-      const a = Number(p.appliedIndex ?? 0n);
-      const h = Number(p.highestIndex ?? 0n);
-      return `${name}=${h > 0 ? ((a / h) * 100).toFixed(1) : '0.0'}% (${a}/${h})`;
-    };
-    process.stderr.write(
-      `\r  sync ${part('unshielded', st.unshielded)} ${part('shielded', st.shielded)} ${part('dust', st.dust)} isSynced=${st.isSynced}      `,
-    );
-  });
-
-  const synced = await ctx.wallet.waitForSyncedState();
-  progressSub.unsubscribe();
-  process.stderr.write('\n');
-
-  const night = synced.unshielded.balances[unshieldedToken().raw] ?? 0n;
-  log(`NIGHT balance: ${night}`);
-  if (process.argv.includes('--balance-only')) {
-    log(`DUST balance : ${synced.dust.balance(new Date())}`);
-    const unreg = synced.unshielded.availableCoins.filter((c) => c.meta?.registeredForDustGeneration !== true);
-    log(`unregistered NIGHT UTXOs: ${unreg.length}`);
-    await ctx.wallet.close?.();
-    process.exit(night > 0n ? 0 : 1);
-  }
-  if (night === 0n) die('wallet holds no NIGHT — fund it before deploying');
-
-  await registerDustIfNeeded(ctx);
-  await waitForDust(ctx);
-
-  const providers = buildProviders(ctx);
-
-  // deployContract takes a CompiledContract wrapper, not a bare `new Contract(...)`.
-  // make(tag, ctor) takes the CLASS; witnesses and the compiled-asset directory
-  // are attached to it, not passed separately.
-  const compiledContract = CompiledContract.make('datum', Contract).pipe(
-    CompiledContract.withWitnesses(witnesses),
-    CompiledContract.withCompiledFileAssets(ZK_DIR),
-  );
-
-  // --address <hex> attaches to an already-deployed contract instead of
-  // deploying a new one. Deploy and call are separate steps on purpose: the
-  // call reads contract state through the indexer, and running it in the same
-  // breath as the deploy races the indexer's view of the new contract.
-  const addrIdx = process.argv.indexOf('--address');
-  const existingAddress = addrIdx >= 0 ? process.argv[addrIdx + 1] : null;
-
-  let deployed;
-  if (existingAddress) {
-    log(`attaching to deployed contract ${existingAddress}...`);
-    deployed = await findDeployedContract(providers, {
-      compiledContract,
-      contractAddress: existingAddress,
-      privateStateId: 'datumPrivateState',
-      initialPrivateState: privateState,
-    });
-    log(`CONTRACT ADDRESS : ${existingAddress}`);
-  } else {
-    log('deploying contract...');
-    deployed = await deployContract(providers, {
-      compiledContract,
-      privateStateId: 'datumPrivateState',
-      initialPrivateState: privateState,
-    });
-
-    // FinalizedDeployTxData is privacy-sensitive: read named public fields only,
-    // never spread or stringify the whole object.
-    log('');
-    log(`CONTRACT ADDRESS : ${deployed.deployTxData.public.contractAddress}`);
-    log(`DEPLOY TX HASH   : ${deployed.deployTxData.public.txHash}`);
-    // txId is ONE OF the transaction's identifiers, not a distinct canonical id.
-    // The hash above is the value to quote and to query with.
-    log(`DEPLOY TX IDENT  : ${deployed.deployTxData.public.txId}  (one of several identifiers)`);
-    log(`DEPLOY BLOCK     : ${deployed.deployTxData.public.blockHeight}`);
-  }
-
-  if (process.argv.includes('--deploy-only')) {
-    log('');
-    log('--deploy-only: stopping before attest');
-    await ctx.wallet.close?.();
+  // 1. wallet
+  const ctx = await openWallet({ net: NET, seedHex, statePath: STATE });
+  log(`${stamp()} wallet ${ctx.address} — ${ctx.restoredFrom ? `restored from checkpoint ${ctx.restoredFrom}` : 'cold start from genesis'}`);
+  const { state, seconds } = await waitSynced(ctx);
+  log(`${stamp()} synced in ${(seconds / 60).toFixed(1)} min; rss ${Math.round(process.memoryUsage().rss / 1048576)} MB; NIGHT ${nightBalance(state)}`);
+  const cp = await saveCheckpoint(ctx, NET, STATE);
+  log(`${stamp()} checkpoint written (${cp.bytes} bytes)`);
+  if (nightBalance(state) === 0n) die('wallet holds no NIGHT');
+  if (flag('--sync-only')) {
+    log(`${stamp()} --sync-only: checkpoint saved, stopping before any transaction`);
+    await closeWallet(ctx);
     process.exit(0);
   }
 
-  log('');
-  log('calling attest...');
-  const called = await deployed.callTx.attest(VENUES, RATIO, BigInt(Math.floor(Date.now() / 1000)));
-  const attestTxHash = called.public.txHash;
-  const attestTxIdent = called.public.txId;
-  const attestBlock = called.public.blockHeight;
-  const attestStatus = called.public.status;
+  // 2. DUST
+  const reg = await registerDustIfNeeded(ctx);
+  if (reg.registered) log(`${stamp()} registered ${reg.registered} NIGHT UTXO(s) for DUST`);
+  log(`${stamp()} DUST spendable: ${await waitForDust(ctx)}`);
 
-  log('');
-  log(`ATTEST TX HASH   : ${attestTxHash}`);
-  log(`ATTEST TX IDENT  : ${attestTxIdent}  (one of several identifiers)`);
-  log(`ATTEST BLOCK     : ${attestBlock}`);
-  log(`ATTEST STATUS    : ${attestStatus}`);
+  const record = { network: NET.id, generatedAt: new Date().toISOString(), contractVersion: 'v2' };
 
-  await ctx.wallet.close?.();
+  // 3. book contract
+  const bookProviders = providersFor(ctx, 'datum-book');
+  let book;
+  const existing = arg('--book-address');
+  if (existing) {
+    book = await findDeployedContract(bookProviders, { compiledContract: compiled, contractAddress: existing, privateStateId: 'book' });
+    log(`${stamp()} attached to book contract ${existing}`);
+    record.book = { address: existing };
+  } else {
+    log(`${stamp()} deploying the book contract…`);
+    book = await deployContract(bookProviders, {
+      compiledContract: compiled,
+      privateStateId: 'book',
+      initialPrivateState: { attestorSecret: bytes(bookSecret), ...emptyOpening(), proceeds: Array(SLOTS).fill(0n) },
+      args: [MAX_REF_AGE],
+    });
+    record.book = { address: book.deployTxData.public.contractAddress, deploy: txFields(book.deployTxData.public) };
+    log(`${stamp()} book contract ${record.book.address} — deploy tx ${record.book.deploy.txHash} block ${record.book.deploy.block}`);
+  }
+
+  // 4. the real book, built against a reference block taken now
+  const bookName = arg('--book', 'moonwell-aero');
+  if (bookName !== 'moonwell-aero') die(`unknown book ${bookName}`);
+  const b = await buildMoonwellAeroBook();
+  const f = b.figures;
+  log(`${stamp()} book built at Base block ${b.refBlock}: marks ${f.markedCoverage.toFixed(2)}x, realisable ${f.realisableCoverage.toFixed(2)}x, gap $${Math.round(f.gapUsd).toLocaleString('en')}`);
+
+  const prior = await bookProviders.privateStateProvider.get('book');
+  const period = BigInt(ledger((await bookProviders.publicDataProvider.queryContractState(record.book.address)).data).attestationCount);
+  const ps = {
+    attestorSecret: bytes(bookSecret),
+    positions: pad8(b.book.positions, () => 0n),
+    proceeds: pad8(b.book.proceeds, () => 0n),
+    debt: b.book.debt,
+    nonce: new Uint8Array(randomBytes(32)),
+    prev: period > 0n && prior ? { positions: prior.positions, debt: prior.debt, nonce: prior.nonce } : emptyOpening(),
+  };
+  await bookProviders.privateStateProvider.set('book', ps);
+  const venues = pad8([b.venue], padding);
+  const call = await book.callTx.attest(venues, b.ratio, BigInt(Math.floor(Date.now() / 1000)));
+  record.book.attest = { ...txFields(call.public), period: period.toString(), baseRefBlock: b.refBlock.toString(), figures: f, sources: b.sources };
+  log(`${stamp()} ATTESTED period ${period}: tx ${record.book.attest.txHash} block ${record.book.attest.block} ${record.book.attest.status}`);
+
+  // 5. demo contract for the hosted flow
+  if (!flag('--skip-demo')) {
+    const demoProviders = providersFor(ctx, 'datum-demo');
+    log(`${stamp()} deploying the demo contract…`);
+    const demo = await deployContract(demoProviders, {
+      compiledContract: compiled,
+      privateStateId: 'demo',
+      initialPrivateState: { attestorSecret: bytes(demoSecret), ...emptyOpening(), proceeds: Array(SLOTS).fill(0n) },
+      args: [MAX_REF_AGE],
+    });
+    record.demo = { address: demo.deployTxData.public.contractAddress, deploy: txFields(demo.deployTxData.public) };
+    log(`${stamp()} demo contract ${record.demo.address} — deploy tx ${record.demo.deploy.txHash}`);
+  }
+
+  // 6. fund the sponsor wallet
+  const sponsorNight = BigInt(arg('--sponsor-night', '400000000')); // 400 tNIGHT
+  const sponsorAddr = arg('--sponsor-address');
+  if (sponsorAddr) {
+    const id = await transferNight(ctx, sponsorAddr, sponsorNight);
+    record.sponsorFunding = { to: sponsorAddr, amount: sponsorNight.toString(), txIdentifier: id };
+    log(`${stamp()} sent ${sponsorNight} NIGHT to the sponsor: ${id}`);
+  }
+
+  // 7. checkpoint + public record
+  await saveCheckpoint(ctx, NET, STATE);
+  mkdirSync(resolve(ROOT, 'deployments'), { recursive: true });
+  const out = resolve(ROOT, `deployments/${NET.id}.json`);
+  const previous = existsSync(out) ? JSON.parse(readFileSync(out, 'utf8')) : {};
+  writeFileSync(out, JSON.stringify({ ...previous, ...record, history: [...(previous.history ?? []), record] }, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2) + '\n');
+  log(`${stamp()} wrote deployments/${NET.id}.json`);
+  await closeWallet(ctx);
   process.exit(0);
 };
 
 main().catch((e) => {
-  console.error('deploy failed:', e?.message ?? e);
+  console.error(`${stamp()} deploy failed: ${e?.message ?? e}`);
   console.error(e?.stack ?? '');
   process.exit(1);
 });

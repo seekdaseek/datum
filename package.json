@@ -11,7 +11,8 @@
     "dev": "vite",
     "build:web": "vite build",
     "preview:web": "vite preview",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "test:zk": "node --test test/zk.check.mjs"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-runtime": "0.16.0",

@@ -134,8 +134,12 @@ export const attestOn = async (dep, { privateState, venues, ratio, timestamp = N
   // gasLimit?, costModel?, time?). `time` becomes the block's
   // secondsSinceEpoch, which the kernel block-time queries read.
   const context = createCircuitContext(dep.address, COIN_PUBLIC_KEY, dep.state, privateState, undefined, undefined, Number(now));
-  const { context: after } = await dep.contract.circuits.attest(context, padVenues(venues), ratio, timestamp);
+  const { context: after, proofData } = await dep.contract.circuits.attest(context, padVenues(venues), ratio, timestamp);
   dep.state = after.currentQueryContext.state;
+  // Kept so test/zk.check.mjs can hand the same execution to the real ZK
+  // checker: the simulator runs JavaScript, and JavaScript skips untaken
+  // branches that the circuit still evaluates.
+  dep.lastProofData = proofData;
   return ledger(dep.state);
 };
 
