@@ -95,7 +95,7 @@ export const buildMoonwellAeroBook = async ({ refBlock } = {}) => {
   };
 };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv?.[1]}`) {
   const b = await buildMoonwellAeroBook();
   const f = b.figures;
   const usd = (x) => '$' + x.toLocaleString('en', { maximumFractionDigits: 0 });
