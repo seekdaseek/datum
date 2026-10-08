@@ -18,6 +18,9 @@
 //   - per client IP: one job in flight, RATE_PER_HOUR jobs per rolling hour
 //   - the sponsor's state is visible at GET /api/status: starting, syncing,
 //     ready, proving, low-dust — never a bare spinner
+//   - with PROVER_PM2 set, the proof server is ON DEMAND: started through
+//     PM2 when a job needs it and stopped after PROVER_IDLE_MIN idle minutes,
+//     so it holds no memory on a shared host while nobody is attesting
 //
 // ENVIRONMENT (service/.env.service, mode 0600 — never committed)
 //   DATUM_NETWORK, SPONSOR_SEED, DEMO_ATTESTOR_SECRET, PRIVATE_STATE_PASSWORD,
@@ -25,6 +28,7 @@
 //
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, appendFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,6 +84,8 @@ const QUEUE_MAX = 5;
 const RATE_PER_HOUR = Number(ENV.RATE_PER_HOUR ?? 3); // raised only for the pre-go-live load test
 const CHECKPOINT_EVERY_MS = 10 * 60 * 1000;
 const MIN_DUST = 1_000_000_000_000_000n; // 1 DUST; below this, refuse new jobs
+const PROVER_PM2 = ENV.PROVER_PM2 ?? null;
+const PROVER_IDLE_MS = Number(ENV.PROVER_IDLE_MIN ?? 5) * 60_000;
 
 mkdirSync(STATE_DIR, { recursive: true });
 
@@ -249,7 +255,42 @@ const boot = async () => {
   demo = await findDeployedContract(providers, { compiledContract: compiled, contractAddress: DEMO_CONTRACT, privateStateId: 'demo', initialPrivateState: { attestorSecret: bytesOf(need('DEMO_ATTESTOR_SECRET')), ...emptyOpening(), proceeds: Array(SLOTS).fill(0n) } });
   status.state = 'ready';
   console.log(`ready: demo contract ${DEMO_CONTRACT}`);
+  proverIdleLater();
   pump();
+};
+
+// ---------------------------------------------------------------------------
+// the proof server, on demand
+// ---------------------------------------------------------------------------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const pm2 = (...a) => new Promise((ok, fail) => execFile('/usr/bin/pm2', a, { timeout: 30_000 }, (e, out) => (e ? fail(e) : ok(out))));
+const proverHealthy = async () => { try { return (await fetch(`${net.proofServer}/health`, { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; } };
+let proverStopTimer = null;
+status.prover = PROVER_PM2 ? 'on demand' : 'external';
+
+/** Make sure the proof server answers. Returns true if it had to be started. */
+const proverUp = async () => {
+  clearTimeout(proverStopTimer);
+  if (await proverHealthy()) { status.prover = 'running'; return false; }
+  if (!PROVER_PM2) throw new Error('the proof server is not answering');
+  status.prover = 'starting';
+  await pm2('start', PROVER_PM2);
+  for (let i = 0; i < 60; i++) {
+    if (await proverHealthy()) { status.prover = 'running'; return true; }
+    await sleep(1000);
+  }
+  throw new Error('the proof server did not start');
+};
+
+/** Stop the proof server once nothing has needed it for PROVER_IDLE_MS. */
+const proverIdleLater = () => {
+  if (!PROVER_PM2) return;
+  clearTimeout(proverStopTimer);
+  proverStopTimer = setTimeout(async () => {
+    if (busy || queue.length) return;
+    try { await pm2('stop', PROVER_PM2); status.prover = 'stopped (idle)'; } catch (e) { console.error(`could not stop the prover: ${e.message}`); }
+  }, PROVER_IDLE_MS);
+  proverStopTimer.unref?.();
 };
 
 // ---------------------------------------------------------------------------
@@ -294,6 +335,7 @@ const runJob = async (j) => {
     baseRefBlock: String(b.refBlock),
   };
 
+  if (await proverUp()) step(j, 'waking-prover');
   step(j, 'preparing');
   const { ledger } = await import('../build/datum-full/contract/index.js');
   const count = ledger((await providers.publicDataProvider.queryContractState(DEMO_CONTRACT)).data).attestationCount;
@@ -349,6 +391,7 @@ const pump = async () => {
     status.state = BigInt(status.sponsor?.dust ?? '0') < MIN_DUST ? 'low-dust' : 'ready';
     current = null;
     busy = false;
+    proverIdleLater();
     setImmediate(pump);
   }
 };

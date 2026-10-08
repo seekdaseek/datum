@@ -45,9 +45,8 @@ module.exports = {
         MIDNIGHT_PROOF_SERVER_NO_FETCH_PARAMS: 'true',
         RAYON_NUM_THREADS: '1',
       },
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 5000,
+      // Not autorestarted: datum-api starts and stops it on demand.
+      autorestart: false,
     },
     {
       name: 'datum-api',
@@ -60,6 +59,10 @@ module.exports = {
         STATE_DIR: '/opt/datum/state',
         PROOF_SERVER: 'http://127.0.0.1:6310',
         PORT: '3034',
+        // The prover runs only while there is work: the service starts
+        // datum-prover through PM2 for a job and stops it after 5 idle minutes.
+        PROVER_PM2: 'datum-prover',
+        PROVER_IDLE_MIN: '5',
       },
       autorestart: true,
       max_restarts: 10,

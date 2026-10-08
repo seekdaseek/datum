@@ -255,6 +255,7 @@ const attestationCard = (net, lib, { L, tx }, address, label) => {
 const STEP_LABEL = {
   queued: 'Queued',
   'reading-base': 'Reading fresh reserves from Base',
+  'waking-prover': 'Starting the prover (it sleeps when idle)',
   preparing: 'Preparing the private book',
   proving: 'Proving in zero knowledge',
   'paying-dust': 'Sponsor adds DUST for the fee',
@@ -354,8 +355,8 @@ const attestSection = (net, lib, preview, mountDemo) => {
   const paintJob = (j, t0) => {
     progress.innerHTML = '';
     const steps = j.steps;
-    const order = ['queued', 'reading-base', 'preparing', 'proving', 'paying-dust', 'submitting', 'confirming', 'landed'];
     const done = new Set(steps.map((x) => x.step));
+    const order = ['queued', 'reading-base', ...(done.has('waking-prover') ? ['waking-prover'] : []), 'preparing', 'proving', 'paying-dust', 'submitting', 'confirming', 'landed'];
     const at = Object.fromEntries(steps.map((x) => [x.step, Date.parse(x.at)]));
     for (const [i, st] of order.entries()) {
       const next = order.slice(i + 1).find((n) => at[n]);
