@@ -18,7 +18,7 @@ import { resolve } from 'node:path';
 import * as Rx from 'rxjs';
 import { applyNetwork } from './config.mjs';
 import { ensureEnvSecret, SPONSOR_ENV, ROOT, die } from './seed.mjs';
-import { openWallet, saveCheckpoint, waitSynced, nightBalance, registerDustIfNeeded, waitForDust, closeWallet, log } from './wallet-lib.mjs';
+import { openWallet, saveCheckpoint, waitSynced, nightBalance, registerDustWithRetry, waitForDust, closeWallet, log } from './wallet-lib.mjs';
 
 const NET = applyNetwork();
 const STATE = resolve(ROOT, `state/${NET.id}-sponsor.json`);
@@ -41,7 +41,7 @@ if (night === 0n) {
 }
 log(`${stamp()} NIGHT ${night}`);
 
-const reg = await registerDustIfNeeded(ctx);
+const reg = await registerDustWithRetry(ctx);
 if (reg.registered) log(`${stamp()} registered ${reg.registered} NIGHT UTXO(s) for DUST`);
 log(`${stamp()} DUST spendable: ${await waitForDust(ctx, 3600_000)}`);
 

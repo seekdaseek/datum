@@ -131,6 +131,21 @@ export const waitSynced = async (ctx, { quiet = false } = {}) => {
 export const nightBalance = (state) => state.unshielded.balances[unshieldedToken().raw] ?? 0n;
 export const dustBalance = (state) => state.dust.balance(new Date());
 
+// Freshly received NIGHT must first generate enough DUST to pay its own
+// registration fee (measured on Preprod: 1.0e14 of the 3.0e14 needed, minutes
+// after arrival). Retry instead of failing the whole run.
+export const registerDustWithRetry = async (ctx, { tries = 30, waitMs = 60_000 } = {}) => {
+  for (let i = 1; ; i++) {
+    try {
+      return await registerDustIfNeeded(ctx);
+    } catch (e) {
+      if (!/Insufficient generated dust/.test(e?.message ?? '') || i >= tries) throw e;
+      log(`  DUST for the registration fee is still accruing (try ${i}/${tries}); waiting ${waitMs / 1000} s`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+};
+
 export const registerDustIfNeeded = async (ctx) => {
   const state = await ctx.wallet.waitForSyncedState();
   const unregistered = state.unshielded.availableCoins.filter((c) => c.meta?.registeredForDustGeneration !== true);

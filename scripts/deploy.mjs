@@ -42,7 +42,7 @@ import { applyNetwork } from './config.mjs';
 import { ensureEnvSecret, ensureStorePassword, ROOT, die } from './seed.mjs';
 import {
   openWallet, saveCheckpoint, waitSynced, nightBalance, dustBalance,
-  registerDustIfNeeded, waitForDust, transferNight, walletProviderFor, closeWallet, log,
+  registerDustWithRetry, waitForDust, transferNight, walletProviderFor, closeWallet, log,
 } from './wallet-lib.mjs';
 import { buildMoonwellBook, MARKETS } from './books/moonwell.mjs';
 import { Contract, ledger, pureCircuits } from '../build/datum-full/contract/index.js';
@@ -128,7 +128,7 @@ const main = async () => {
   }
 
   // 2. DUST
-  const reg = await registerDustIfNeeded(ctx);
+  const reg = await registerDustWithRetry(ctx);
   if (reg.registered) log(`${stamp()} registered ${reg.registered} NIGHT UTXO(s) for DUST`);
   log(`${stamp()} DUST spendable: ${await waitForDust(ctx)}`);
 
