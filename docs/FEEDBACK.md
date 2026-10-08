@@ -37,7 +37,28 @@ least range-checking casts in untaken ones), or a compiler warning for
 subtraction under a cast inside a conditional. A `/check` error that names the
 circuit operation instead of "alignment" would have saved most of the time.
 
-## 2. Wallet sync is memory-only, about two hours per process on Preprod
+## 2. One field in a hashed struct can double prover memory, and only `zkir mock-compile` says so
+
+**What happened.** Adding one `Uint<64>` (a per-slot USD rate) to the venue
+struct took the attest circuit from 32,731 rows (k=15) to 35,209 (k=16). A
+k=16 proof peaked at 940 MB in the proof server against 481 MB at k=15, which
+on our 4 GB host is the difference between fitting under a cgroup cap and not.
+
+**Why.** `persistentHash` over the venue array is SHA-256 in-circuit. The
+extra 32 bytes across four slots crossed a compression-block boundary; the
+arithmetic that used the field cost almost nothing (a variant with the field
+but none of the math measured 34,944 rows). Narrowing chain ids and block
+numbers to `Uint<32>` brought it back to 32,606 rows, k=15.
+
+**How we found it.** `compact compile` prints neither k nor rows. The
+toolchain's own `zkir mock-compile <file>.zkir` does, in seconds, on a
+`--skip-zk` build, which made bisection fast. We only found it after
+inferring k from prover-key sizes and cached `bls_midnight_2p*` files.
+
+**What would help.** Print k and rows in `compact compile`'s summary, and
+document that hashed struct width is a row cost in steps of a SHA-256 block.
+
+## 3. Wallet sync is memory-only, about two hours per process on Preprod
 
 **What happened.** Every process that writes to Preprod starts the wallet from
 genesis and syncs for about two hours, CPU-bound, before it can do anything.
@@ -55,7 +76,7 @@ checkpoint made on a Mac and never pays the sync.
 (`facade.serialize()` / `WalletFacade.restore()`), and a warning in the docs
 that the checkpoint is sensitive wallet state.
 
-## 3. Two copies of the on-chain runtime break `instanceof`
+## 4. Two copies of the on-chain runtime break `instanceof`
 
 **What happened.** Every circuit call failed with
 `expected instance of StateValue`.
@@ -71,7 +92,7 @@ copy hoists.
 **What would help.** A peer dependency instead of a direct one, so npm
 refuses the split, or a runtime check that names both versions in the error.
 
-## 4. The indexer's `identifiers` needs an inline fragment, and `txId` is "one of" them
+## 5. The indexer's `identifiers` needs an inline fragment, and `txId` is "one of" them
 
 `identifiers` lives on `RegularTransaction`, not on the `Transaction`
 interface, so a plain query fails with *Unknown field "identifiers" on type
@@ -81,17 +102,19 @@ interface, so a plain query fails with *Unknown field "identifiers" on type
 explain the difference in the README. A sentence in the docs would have
 saved an hour.
 
-## 5. The proof server: memory, binding, parameters
+## 6. The proof server: memory, binding, parameters
 
 Measured while putting a proof server on a shared 4 GB VPS.
 
-- **Memory scales with k and nothing reports k.** The 8-slot v2 circuit is
-  k=16 and peaked at 940 MB in the proof server; the 4-slot version is k=15
-  and peaked at 481 MB (`scripts/diag/prove-mem.mjs`, cgroup `memory.peak`,
-  one thread). The compiler does not print k; we read it from the prover key
-  size (19.5 MB against 10.05 MB) and from which `bls_midnight_2p*` file it
-  fetched. Printing k and an estimated prover memory at compile time would
-  make this a design input instead of a production surprise.
+- **Memory scales with k.** The 8-slot v2 circuit is k=16 and peaked at
+  940 MB in the proof server; the 4-slot version is k=15 and peaked at 481 MB
+  (`scripts/diag/prove-mem.mjs`, cgroup `memory.peak`, one thread). See §2 for
+  how to see k before it bites.
+- **A long-lived proof server grows.** Our local container, capped at 1.2 GB
+  and multi-threaded, was OOM-killed twice after a few dozen proofs although a
+  single proof peaks near 500 MB. The hosted one runs with one worker and one
+  thread under a hard cgroup limit, and the load test reads its
+  `memory.current` after ten proofs.
 - **No bind address.** It listens on `0.0.0.0` with no option to change it.
   On a host without a firewall that is a public prover. We confined it with a
   systemd scope (`IPAddressDeny=any`, `IPAddressAllow=localhost`); a
@@ -106,7 +129,7 @@ Measured while putting a proof server on a shared 4 GB VPS.
   `/nix/store` paths (82 MB) to a host gives a native binary. Worth
   documenting for hosts that cannot run Docker.
 
-## 6. Wallet sync progress reports no total
+## 7. Wallet sync progress reports no total
 
 Shielded and dust progress carry `appliedIndex` but keep `highestIndex` at 0
 for the whole sync, so a percentage is impossible; unshielded progress has a
@@ -114,7 +137,7 @@ different shape (`appliedId` / `highestTransactionId`). We print the absolute
 applied counters. One progress shape with a real total would let a hosted
 service show an honest "syncing, 40%".
 
-## 7. A local chain left idle for weeks stops producing usable blocks
+## 8. A local chain left idle for weeks stops producing usable blocks
 
 After the local stack sat stopped from Aug 28 to Oct 8, every block after the
 first v2 deploy hit `HitBlockWeightLimit`. The deploy was 9.2% of a block's
@@ -123,7 +146,7 @@ problem. `docker compose down -v` and a fresh start fixed it. A note in
 midnight-local-dev that a stale chain should be reset, not resumed, would have
 saved the diagnosis.
 
-## 8. Smaller things
+## 9. Smaller things
 
 - `deployContract` takes `compiledContract`, built with
   `CompiledContract.make(name, Contract).pipe(withWitnesses(w),

@@ -80,15 +80,20 @@ import CompactStandardLibrary;
 // ---------------------------------------------------------------------------
 // WHAT THE CIRCUIT CANNOT CHECK, AND WHO DOES
 // ---------------------------------------------------------------------------
-// A Midnight circuit cannot read another chain. Three provenance facts are
-// therefore checked by the verifier against a public RPC, using the values
+// A Midnight circuit cannot read another chain. These facts are therefore
+// checked by the verifier against a public RPC, using the values
 // this contract binds and publishes:
 //   (a) the log at (syncBlock, logIndex) in syncTx is a Sync from `pool`, and
 //       its raw reserves normalise to exactly reserveX / reserveY;
 //   (b) there is no later Sync from `pool` in (syncBlock:logIndex, refBlock],
 //       so the reserves are the pool's state AT refBlock, not a deeper past
 //       state picked on purpose;
-//   (c) refTime is the timestamp of refBlock.
+//   (c) refTime is the timestamp of refBlock;
+//   (d) the pool is a factory-vouched constant-product pool, collateralIsToken0
+//       names the side being sold, decX/decY are the tokens' decimals and
+//       feeBps is the pool's fee at refBlock;
+//   (e) quoteRate is 1.0 for a USD stablecoin, or the named oracle's price for
+//       a priced quote (WETH: Moonwell) at refBlock.
 // The circuit enforces the parts that need no other chain: refTime is in the
 // past and within maxRefAge of Midnight block time at inclusion; pools are
 // distinct; fees are in range; padding contributes nothing.
@@ -162,11 +167,11 @@ export struct AttestationRecord {
 export ledger attestationCount: Counter;
 
 // hash(domain, attestorSecret). Only the holder of the secret can attest.
-export ledger attestor: Bytes<32>;
+export sealed ledger attestor: Bytes<32>;
 
 // Maximum seconds between the reference block's timestamp and inclusion on
 // Midnight. Fixed at deployment.
-export ledger maxRefAge: Uint<32>;
+export sealed ledger maxRefAge: Uint<32>;
 
 // Chain head: the latest commitment, and the one before it (needed to
 // recompute the previous commitment for the continuity check).
@@ -182,8 +187,8 @@ export ledger prevHead: Bytes<32>;
 // chain, 2026-10-08.
 export ledger headPeriod: Uint<64>;
 
-// Latest attestation, flattened for cheap reads.
-export ledger bookCommitment: Bytes<32>;
+// Latest attestation, flattened for cheap reads. The latest book commitment
+// is `head`.
 export ledger venues: Vector<4, VenueSlot>;
 export ledger venuesHash: Bytes<32>;
 export ledger requiredRatio: Uint<64>;
@@ -231,6 +236,59 @@ constructor(refAge: Uint<32>) {
   attestor = disclose(attestorKey(attestorSecret()));
   // DISCLOSE: a public deployment parameter.
   maxRefAge = disclose(refAge);
+
+  // Every other field starts at its zero value. Period 0's `prev` is this
+  // zero head, which is what the verifier treats as genesis.
+  head = default<Bytes<32>>;
+  prevHead = default<Bytes<32>>;
+  headPeriod = 0;
+  venues = default<Vector<4, VenueSlot>>;
+  venuesHash = default<Bytes<32>>;
+  requiredRatio = 0;
+  covered = false;
+  attestedAt = 0;
+}
+
+// ---------------------------------------------------------------------------
+// ONE SLOT — every check that needs only the slot and its two private numbers
+// (collateral sold q, claimed proceeds p). Distinctness needs the whole array
+// and stays in attest.
+// ---------------------------------------------------------------------------
+circuit checkSlot(slot: VenueSlot, q: Uint<64>, p: Uint<64>, age: Uint<32>): [] {
+  // SOUNDNESS (carried from v1): X > 0 and Y > 0 on EVERY slot, padding
+  // included. With q = 0 the per-slot bound reduces to p*X*FEE_SCALE <= 0,
+  // which pins p to 0 only while X > 0.
+  // Written as != 0: for an unsigned value it is the same test as > 0, and
+  // an equality costs far fewer circuit rows than a range comparison.
+  assert(slot.reserveX != 0, "datum: reserveX must be positive in every slot, padding included");
+  assert(slot.reserveY != 0, "datum: reserveY must be positive in every slot, padding included");
+  assert(slot.feeBps < 10000, "datum: feeBps must be below 10000");
+
+  if (isActive(slot)) {
+    // FRESHNESS, enforced by the ledger: the reference block's timestamp
+    // is in the past, and inclusion happens within maxRefAge of it. These
+    // are kernel queries in the public transcript, re-evaluated by the
+    // node against the real block, so a prover cannot fake them.
+    const rt = slot.refTime;
+    assert(slot.refBlock >= slot.syncBlock, "datum: refBlock precedes the Sync it vouches for");
+    // No positivity assert on quoteRate: a zero rate only understates
+    // proceeds, so it can make a verdict falsely NOT COVERED, never falsely
+    // COVERED. The verifier checks every rate against its source anyway.
+    assert(blockTimeGt(rt), "datum: reference block is in the future");
+    assert(blockTimeLt((rt + age) as Uint<64>), "datum: reference block is older than maxRefAge");
+  } else {
+    // PADDING contributes nothing. Belt and braces with the X > 0 rule.
+    assert(p == 0, "datum: a padding slot cannot claim proceeds");
+  }
+
+  // REALISABLE PROCEEDS WITH FEE. Selling q into (X, Y) with fee f returns
+  //   Y * q * g / (X * FEE_SCALE + q * g),   g = FEE_SCALE - f.
+  // The prover supplies p as a claimed lower bound; the circuit checks the
+  // cross-multiplied form. Overclaiming fails here.
+  const g = (10000 - slot.feeBps) as Uint<16>;
+  const lhs: Uint<160> = p * (slot.reserveX * 10000 + q * g);
+  const rhs: Uint<160> = slot.reserveY * q * g;
+  assert(lhs <= rhs, "datum: claimed proceeds exceed realisable proceeds for this slot");
 }
 
 // ---------------------------------------------------------------------------
@@ -269,29 +327,9 @@ export circuit attest(
 
   for (const i of 0..4) {
     const slot = vs[i];
-
-    // SOUNDNESS (carried from v1): X > 0 and Y > 0 on EVERY slot, padding
-    // included. With q = 0 the per-slot bound reduces to p*X*FEE_SCALE <= 0,
-    // which pins p to 0 only while X > 0.
-    // Written as != 0: for an unsigned value it is the same test as > 0, and
-    // an equality costs far fewer circuit rows than a range comparison.
-    assert(slot.reserveX != 0, "datum: reserveX must be positive in every slot, padding included");
-    assert(slot.reserveY != 0, "datum: reserveY must be positive in every slot, padding included");
-    assert(slot.feeBps < 10000, "datum: feeBps must be below 10000");
+    checkSlot(slot, q[i], p[i], age);
 
     if (isActive(slot)) {
-      // FRESHNESS, enforced by the ledger: the reference block's timestamp
-      // is in the past, and inclusion happens within maxRefAge of it. These
-      // are kernel queries in the public transcript, re-evaluated by the
-      // node against the real block, so a prover cannot fake them.
-      const rt = slot.refTime;
-      assert(slot.refBlock >= slot.syncBlock, "datum: refBlock precedes the Sync it vouches for");
-      // No positivity assert on quoteRate: a zero rate only understates
-      // proceeds, so it can make a verdict falsely NOT COVERED, never falsely
-      // COVERED. The verifier checks every rate against its source anyway.
-      assert(blockTimeGt(rt), "datum: reference block is in the future");
-      assert(blockTimeLt((rt + age) as Uint<64>), "datum: reference block is older than maxRefAge");
-
       // DISTINCT POOLS: listing one pool twice would let a sale be split
       // across two copies of the same depth and undercount its price impact.
       // Each unordered pair is checked once, from its lower index: a
@@ -305,19 +343,7 @@ export circuit attest(
           );
         }
       }
-    } else {
-      // PADDING contributes nothing. Belt and braces with the X > 0 rule.
-      assert(p[i] == 0, "datum: a padding slot cannot claim proceeds");
     }
-
-    // REALISABLE PROCEEDS WITH FEE. Selling q into (X, Y) with fee f returns
-    //   Y * q * g / (X * FEE_SCALE + q * g),   g = FEE_SCALE - f.
-    // The prover supplies p as a claimed lower bound; the circuit checks the
-    // cross-multiplied form. Overclaiming fails here.
-    const g = (10000 - slot.feeBps) as Uint<16>;
-    const lhs: Uint<160> = p[i] * (slot.reserveX * 10000 + q[i] * g);
-    const rhs: Uint<160> = slot.reserveY * q[i] * g;
-    assert(lhs <= rhs, "datum: claimed proceeds exceed realisable proceeds for this slot");
   }
 
   // Proceeds valued in USD: quote micro-units times USD micro per quote token.
@@ -368,7 +394,6 @@ export circuit attest(
   prevHead = currentHead;
   head = commitment;
   headPeriod = period;
-  bookCommitment = commitment;
   venues = vs;
   venuesHash = vh;
   requiredRatio = r;

@@ -84,4 +84,8 @@ describe('CONTROL: a fair mark-based check passes the book datum says is NOT COV
     // Runtime 0.16 circuits are synchronous, so wrap the call to observe the throw.
     await assert.rejects(async () => c.circuits.markCheck(ctx, padZeros([0n]), RATIO), /a held position has no oracle price/);
   });
+
+  test('the control refuses a zero bar', async () => {
+    await assert.rejects(runControl([Q], DEBT, 0n), /control: requiredRatio must be positive/);
+  });
 });

@@ -214,6 +214,9 @@ describe('FRESHNESS: reserves must be recent, judged by Midnight block time', ()
     await assert.rejects(attest({ privateState: b(), venues: [aeroPool], ratio: RATIO_120, timestamp: NOW - 700n }), /attestedAt is too far in the past/);
     await assert.rejects(attest({ privateState: b(), venues: [aeroPool], ratio: RATIO_120, timestamp: NOW + 700n }), /attestedAt is too far in the future/);
   });
+  test('a timestamp of 600 or less is rejected before it can underflow', async () => {
+    await assert.rejects(attest({ privateState: b(), venues: [aeroPool], ratio: RATIO_120, timestamp: 600n }), /timestamp out of range/);
+  });
 });
 
 // ===========================================================================
@@ -283,7 +286,7 @@ describe('CHAIN: each period commits to the last, and must be able to open it', 
     assert.equal(l1.history.size(), 2n);
     const r0 = l1.history.lookup(0n);
     const r1 = l1.history.lookup(1n);
-    assert.deepEqual(r0.commitment, l0.bookCommitment);
+    assert.deepEqual(r0.commitment, l0.head);
     assert.deepEqual(r1.prev, r0.commitment, 'period 1 links to period 0');
     assert.deepEqual(r0.prev, bytesOf(0), 'period 0 links to genesis');
     assert.equal(r0.covered, false);
@@ -318,7 +321,7 @@ describe('CHAIN: each period commits to the last, and must be able to open it', 
     const b0 = p0();
     const a0 = await attestOn(depA, { privateState: b0, venues: [aeroPool], ratio: RATIO_120 });
     const a1 = await attestOn(depA, { privateState: { ...b0, prev: { positions: b0.positions, debt: b0.debt, nonce: b0.nonce } }, venues: [aeroPool], ratio: RATIO_120 });
-    assert.notDeepEqual(a0.bookCommitment, a1.bookCommitment, 'a commitment cannot be replayed at another period');
+    assert.notDeepEqual(a0.head, a1.head, 'a commitment cannot be replayed at another period');
   });
 });
 
@@ -357,7 +360,7 @@ describe('the book commitment binds positions, debt and nonce', () => {
     const b = bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO);
     mutate?.(b);
     const out = await attest({ privateState: b, venues: [aeroPool], ratio: RATIO_120 });
-    return Buffer.from(out.bookCommitment).toString('hex');
+    return Buffer.from(out.head).toString('hex');
   };
   test('changing only the debt changes the commitment', async () => {
     assert.notEqual(await commitmentFor(), await commitmentFor((b) => { b.debt += MICRO; }));

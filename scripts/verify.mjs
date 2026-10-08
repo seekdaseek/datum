@@ -54,7 +54,7 @@ for (const [label, address] of targets) {
   console.log(`requiredRatio    : ${L.requiredRatio}  (= ${(Number(L.requiredRatio) / 1e6).toFixed(2)}x)`);
   console.log(`attestedAt       : ${L.attestedAt}  (${new Date(Number(L.attestedAt) * 1000).toISOString()})`);
   console.log(`maxRefAge        : ${L.maxRefAge} s`);
-  console.log(`bookCommitment   : ${hex(L.bookCommitment)}`);
+  console.log(`book commitment  : ${hex(L.head)}  (the chain head)`);
   console.log(`venuesHash       : ${hex(L.venuesHash)}`);
   console.log('');
 

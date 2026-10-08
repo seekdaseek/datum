@@ -35,7 +35,7 @@ const MUTANTS = [
   { name: 'attestor not checked', file: C,
     from: 'assert(attestor == attestorKey(attestorSecret()), "datum: caller is not the registered attestor");', to: '' },
   { name: 'padding may claim proceeds', file: C,
-    from: 'assert(p[i] == 0, "datum: a padding slot cannot claim proceeds");', to: '' },
+    from: 'assert(p == 0, "datum: a padding slot cannot claim proceeds");', to: '' },
   { name: 'verifier: digest compare always matches', file: 'scripts/verify-core.mjs',
     from: 'const bound = hex(L.venuesHash);', to: 'const bound = recomputed;' },
   { name: 'verifier: cherry-pick window disabled', file: 'scripts/provenance.mjs',

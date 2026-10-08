@@ -191,7 +191,7 @@ const attestationCard = (net, lib, { L, tx }, address, label) => {
   const row = (k, ...v) => kv.append(el('div', 'k', k), el('div', 'v', ...v));
   row('Transaction hash', copyable(tx.hash, short(tx.hash, 12)));
   row('Block', num(tx.block.height), ` · ${new Date(tx.block.timestamp).toISOString().replace('T', ' ').slice(0, 19)} UTC`);
-  row('Book commitment', copyable(hex(L.bookCommitment), short(hex(L.bookCommitment), 12)), el('span', 'dimtext', ' hiding: the positions and debt are not in it in the clear'));
+  row('Book commitment', copyable(hex(L.head), short(hex(L.head), 12)), el('span', 'dimtext', ' hiding: the positions and debt are not in it in the clear'));
   row('Attested at', new Date(Number(L.attestedAt) * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC');
   s.append(kv);
 
