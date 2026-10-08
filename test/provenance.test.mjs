@@ -38,7 +38,7 @@ describe('venue provenance: an honest slot', () => {
     const r = await verifyVenueSlot(honest, { fetchImpl: replay() });
     assert.deepEqual(failed(r), []);
     assert.equal(r.ok, true);
-    assert.equal(r.checks.length, 12);
+    assert.equal(r.checks.length, 13);
   });
 });
 
@@ -120,7 +120,7 @@ describe('the pool must be a real constant-product pool', () => {
 
   test('selling the stablecoin into the pool instead of the collateral is rejected', async () => {
     const r = await verifyVenueSlot({ ...honest, collateralIsToken0: !honest.collateralIsToken0, decX: honest.decY, decY: honest.decX }, { fetchImpl: replay() });
-    assert.ok(failed(r).includes('quote side is an allowed USD stablecoin'));
+    assert.ok(failed(r).includes('quote side is a USD stablecoin or a priced quote'));
   });
 
   test('a reference timestamp that is not refBlock\'s is rejected', async () => {
@@ -134,5 +134,37 @@ describe('normalisation rounds against the prover', () => {
     // 1.0000005 tokens at 18 decimals -> 1_000_001 micro when rounding up
     assert.equal(normaliseUp(1_000_000_500_000_000_000n, 18), 1_000_001n);
     assert.equal(normaliseDown(1_000_000_500_000_000_000n, 18), 1_000_000n);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A WETH-quoted pool: WELL/WETH on Aerodrome, valued at Moonwell's WETH
+// oracle price at the reference block. Recorded traffic, replayed offline.
+// ---------------------------------------------------------------------------
+const wfx = JSON.parse(readFileSync(new URL('./fixtures/base-well-weth.json', import.meta.url)));
+const wellSlot = revive(wfx.honestSlot);
+const wreplay = async (_url, init) => {
+  const { method, params } = JSON.parse(init.body);
+  const key = JSON.stringify([method, params]);
+  if (!(key in wfx.tape)) throw new Error(`fixture tape has no answer for ${key}`);
+  return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: 1, result: wfx.tape[key] }) };
+};
+
+describe('PRICED QUOTE: a WETH-quoted pool, valued at Moonwell’s oracle at refBlock', () => {
+  test('an honest WELL/WETH slot passes all thirteen checks', async () => {
+    const r = await verifyVenueSlot(wellSlot, { fetchImpl: wreplay });
+    assert.deepEqual(failed(r), []);
+    assert.equal(r.checks.length, 13);
+    assert.ok(wellSlot.quoteRate > 1_000_000_000n, 'WETH is priced in thousands of dollars');
+  });
+
+  test('a quoteRate one unit above the oracle is rejected, and nothing else fails', async () => {
+    const r = await verifyVenueSlot({ ...wellSlot, quoteRate: wellSlot.quoteRate + 1n }, { fetchImpl: wreplay });
+    assert.deepEqual(failed(r), ['quoteRate matches its source at refBlock']);
+  });
+
+  test('a USD stablecoin slot must carry exactly 1.0', async () => {
+    const r = await verifyVenueSlot({ ...honest, quoteRate: 1_000_001n }, { fetchImpl: replay() });
+    assert.deepEqual(failed(r), ['quoteRate matches its source at refBlock']);
   });
 });

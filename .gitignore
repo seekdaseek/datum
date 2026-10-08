@@ -21,3 +21,6 @@ midnight-level-db/
 frontend-dist/
 docs/screenshots/
 state/
+
+# local Claude Code settings (plugin scope)
+.claude/settings.local.json

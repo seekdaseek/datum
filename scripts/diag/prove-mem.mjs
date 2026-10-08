@@ -20,9 +20,9 @@ const w = {
   attestorSecret: ({ privateState: s }) => [s, b(0xa7)],
   previousOpening: ({ privateState: s }) => [s, empty],
 };
-const pad = { chainId: 0n, pool: b(0, 20), collateralIsToken0: false, decX: 0n, decY: 0n, feeBps: 0n, syncBlock: 0n, syncTx: b(0), logIndex: 0n, refBlock: 0n, refTime: 0n, reserveX: 1n, reserveY: 1n };
+const pad = { chainId: 0n, pool: b(0, 20), collateralIsToken0: false, decX: 0n, decY: 0n, feeBps: 0n, syncBlock: 0n, syncTx: b(0), logIndex: 0n, refBlock: 0n, refTime: 0n, reserveX: 1n, reserveY: 1n, quoteRate: 0n };
 const X = 27_000_000n * 1_000_000n, Y = 21_000_000n * 1_000_000n, q = 1_000_000n * 1_000_000n;
-const v = { ...pad, chainId: 8453n, pool: b(0x6c, 20), decX: 18n, decY: 6n, feeBps: 30n, syncBlock: 100n, syncTx: b(0x22), logIndex: 1n, refBlock: 101n, refTime: NOW - 60n, reserveX: X, reserveY: Y };
+const v = { ...pad, chainId: 8453n, pool: b(0x6c, 20), decX: 18n, decY: 6n, feeBps: 30n, syncBlock: 100n, syncTx: b(0x22), logIndex: 1n, refBlock: 101n, refTime: NOW - 60n, reserveX: X, reserveY: Y, quoteRate: 1_000_000n };
 const p = (Y * q * 9970n) / (X * 10000n + q * 9970n);
 const ps0 = { positions: [q, ...Array(SLOTS - 1).fill(0n)], proceeds: [p, ...Array(SLOTS - 1).fill(0n)], debt: 1n, nonce: b(1) };
 const c = new Contract(w);

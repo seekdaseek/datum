@@ -13,7 +13,8 @@
   "refBlock": "52327015n",
   "refTime": "1791443377n",
   "reserveX": "27799024916317n",
-  "reserveY": "21578464553344n"
+  "reserveY": "21578464553344n",
+  "quoteRate": "1000000n"
  },
  "cherry": {
   "syncBlock": "52326621n",

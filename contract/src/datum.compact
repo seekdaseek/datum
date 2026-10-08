@@ -31,6 +31,10 @@ import CompactStandardLibrary;
 //      chained to the previous one: its commitment includes the previous
 //      head and the period number, and the circuit requires the attestor to
 //      prove knowledge of the previous period's opening.
+//   6. A slot may be quoted in a priced asset, not only a USD stablecoin.
+//      Each slot carries a PUBLIC quoteRate (USD per whole quote token), and
+//      proceeds are valued at it. 1.0 for USDC; for WETH, Moonwell's oracle
+//      price at refBlock, which the verifier re-reads from Base.
 //
 // ---------------------------------------------------------------------------
 // SCALE CONVENTION
@@ -43,9 +47,14 @@ import CompactStandardLibrary;
 // Rounding X up and Y down can only understate proceeds, never overstate.
 // Normalised quantities are capped at 2^64 (~1.8e13 whole tokens).
 //
-// The quote side of every active slot must be a USD stablecoin, so proceeds
-// are in USD micro-units and sum directly against a USD debt. Multi-hop exits
-// (collateral -> WETH -> USDC) are out of scope for v2 and stated as such.
+// Proceeds p are in QUOTE micro-units. quoteRate is USD micro-units per WHOLE
+// quote token (USDC: 1_000_000; WETH at $2,558.36: 2_558_358_868), so
+//   p * quoteRate  is USD in units of 1e-12, the same scale as
+//   debt * requiredRatio (USD micro-units times RATIO_SCALE).
+// For a WETH-quoted slot this values the WETH leg AT THE MARK: the circuit
+// prices the collateral's depth exactly and the WETH's at its oracle price.
+// That assumption is stated, not hidden; the README measures WETH's own depth
+// to back it.
 //
 // RATIO_SCALE = 1_000_000. requiredRatio is the ratio times RATIO_SCALE.
 //
@@ -61,8 +70,8 @@ import CompactStandardLibrary;
 //   X * FEE_SCALE + q * g            < 2^79
 //   p * (X * FEE_SCALE + q * g)      < 2^143   per-slot LHS, widest term
 //   Y * q * g                        < 2^142   per-slot RHS
-//   sum(p) over 4 slots              < 2^67
-//   sum(p) * RATIO_SCALE             < 2^87
+//   p * quoteRate                    < 2^128
+//   sum over 4 slots                 < 2^130
 //   debt * requiredRatio             < 2^128
 //
 // Per-slot accumulators are Uint<160>: 17 bits over the widest term. The
@@ -87,22 +96,31 @@ import CompactStandardLibrary;
 
 // One venue slot's PUBLIC state, provenance included.
 //
+// Field widths are part of the circuit budget. venueDigest is a SHA-256
+// persistentHash over all four slots, so every byte added to a slot can add a
+// whole compression block. Adding quoteRate as a Uint<64> took the circuit
+// from 32,731 rows (k=15) to 35,209 (k=16), which doubles prover memory.
+// Chain ids and block numbers are Uint<32> instead (4.29e9: about 272 years
+// of 2-second Base blocks), which brings it back to 32,606 rows, k=15.
+// Measured with `zkir mock-compile`.
+//
 // A slot is ACTIVE when chainId != 0. Padding slots use chainId 0 and must
 // carry zero claimed proceeds.
 export struct VenueSlot {
-  chainId: Uint<64>;          // EIP-155 chain id (1 Ethereum, 8453 Base)
+  chainId: Uint<32>;          // EIP-155 chain id (1 Ethereum, 8453 Base)
   pool: Bytes<20>;            // constant-product pool contract
   collateralIsToken0: Boolean;// which side of the pool the book sells
   decX: Uint<8>;              // decimals of the collateral token
-  decY: Uint<8>;              // decimals of the quote stablecoin
+  decY: Uint<8>;              // decimals of the quote token
   feeBps: Uint<16>;           // pool swap fee in basis points
-  syncBlock: Uint<64>;        // block of the Sync log the reserves come from
+  syncBlock: Uint<32>;        // block of the Sync log the reserves come from
   syncTx: Bytes<32>;          // transaction hash containing that log
   logIndex: Uint<32>;         // index of that log within its block
-  refBlock: Uint<64>;         // reserves are claimed to be current AT this block
+  refBlock: Uint<32>;         // reserves are claimed to be current AT this block
   refTime: Uint<64>;          // unix timestamp of refBlock
   reserveX: Uint<64>;         // collateral reserve, micro-units, rounded up
   reserveY: Uint<64>;         // quote reserve, micro-units, rounded down
+  quoteRate: Uint<64>;        // USD micro-units per whole quote token
 }
 
 // The preimage of the book commitment. Including the previous head and the
@@ -238,7 +256,7 @@ export circuit attest(
   // --- who may attest ------------------------------------------------------
   assert(attestor == attestorKey(attestorSecret()), "datum: caller is not the registered attestor");
 
-  assert(ratio > 0, "datum: requiredRatio must be positive");
+  assert(ratio != 0, "datum: requiredRatio must be positive");
 
   // --- the attestation time is Midnight's, not the caller's ----------------
   // attestedAt must be within 10 minutes of the block time at inclusion.
@@ -255,8 +273,10 @@ export circuit attest(
     // SOUNDNESS (carried from v1): X > 0 and Y > 0 on EVERY slot, padding
     // included. With q = 0 the per-slot bound reduces to p*X*FEE_SCALE <= 0,
     // which pins p to 0 only while X > 0.
-    assert(slot.reserveX > 0, "datum: reserveX must be positive in every slot, padding included");
-    assert(slot.reserveY > 0, "datum: reserveY must be positive in every slot, padding included");
+    // Written as != 0: for an unsigned value it is the same test as > 0, and
+    // an equality costs far fewer circuit rows than a range comparison.
+    assert(slot.reserveX != 0, "datum: reserveX must be positive in every slot, padding included");
+    assert(slot.reserveY != 0, "datum: reserveY must be positive in every slot, padding included");
     assert(slot.feeBps < 10000, "datum: feeBps must be below 10000");
 
     if (isActive(slot)) {
@@ -266,6 +286,9 @@ export circuit attest(
       // node against the real block, so a prover cannot fake them.
       const rt = slot.refTime;
       assert(slot.refBlock >= slot.syncBlock, "datum: refBlock precedes the Sync it vouches for");
+      // No positivity assert on quoteRate: a zero rate only understates
+      // proceeds, so it can make a verdict falsely NOT COVERED, never falsely
+      // COVERED. The verifier checks every rate against its source anyway.
       assert(blockTimeGt(rt), "datum: reference block is in the future");
       assert(blockTimeLt((rt + age) as Uint<64>), "datum: reference block is older than maxRefAge");
 
@@ -297,8 +320,11 @@ export circuit attest(
     assert(lhs <= rhs, "datum: claimed proceeds exceed realisable proceeds for this slot");
   }
 
-  const proceeds = p[0] + p[1] + p[2] + p[3];
-  const isCovered = proceeds * 1000000 >= debt * ratio;
+  // Proceeds valued in USD: quote micro-units times USD micro per quote token.
+  const proceedsUsd =
+    p[0] * vs[0].quoteRate + p[1] * vs[1].quoteRate +
+    p[2] * vs[2].quoteRate + p[3] * vs[3].quoteRate;
+  const isCovered = proceedsUsd >= debt * ratio;
 
   // --- the chain -----------------------------------------------------------
   const period = attestationCount.read();
@@ -308,7 +334,7 @@ export circuit attest(
   // the previous period's opening, privately. The opening never leaves the
   // circuit; only the fact that it matches the published head does.
   const prevOpen = previousOpening();
-  if (period > 0) {
+  if (period != 0) {
     const reopened = persistentCommit<BookPreimage>(
       BookPreimage {
         positions: prevOpen.positions,

@@ -66,9 +66,16 @@ describe('the real ZK checker accepts what the simulator accepts', () => {
     await zkCheck(dep.lastProofData);
   });
 
+  test('a WETH-quoted slot beside a USDC slot, valued at their rates', async () => {
+    const weth = venue({ pool: poolOf(0x89), reserveX: 271_920_150n * MICRO, reserveY: 256_156_648n, feeBps: 100n, quoteRate: 2_558_358_868n });
+    const dep = await deploy();
+    await attestOn(dep, { privateState: bookFor([v, weth], [Q, 131_253_121n * MICRO], 1_000_000n * MICRO), venues: [v, weth], ratio: R });
+    await zkCheck(dep.lastProofData);
+  });
+
   test('maximum-width inputs', async () => {
     const MAX = UINT64_CAP - 1n;
-    const big = venue({ reserveX: MAX, reserveY: MAX });
+    const big = venue({ reserveX: MAX, reserveY: MAX, quoteRate: MAX, syncBlock: (1n << 32n) - 2n, refBlock: (1n << 32n) - 1n });
     const p = realisableProceeds(MAX, MAX, MAX, 30n);
     const dep = await deploy();
     await attestOn(dep, { privateState: { positions: padZeros([MAX]), proceeds: padZeros([p]), debt: 1n, nonce: nonceOf(1) }, venues: [big], ratio: R });

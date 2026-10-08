@@ -19,7 +19,7 @@ const honest = {
   chainId: big(h.chainId), pool: bytes(h.pool), collateralIsToken0: h.collateralIsToken0,
   decX: big(h.decX), decY: big(h.decY), feeBps: big(h.feeBps),
   syncBlock: big(h.syncBlock), syncTx: bytes(h.syncTx), logIndex: big(h.logIndex),
-  refBlock: big(h.refBlock), refTime: big(h.refTime), reserveX: big(h.reserveX), reserveY: big(h.reserveY),
+  refBlock: big(h.refBlock), refTime: big(h.refTime), reserveX: big(h.reserveX), reserveY: big(h.reserveY), quoteRate: big(h.quoteRate),
 };
 const replay = async (_url, init) => {
   const { method, params } = JSON.parse(init.body);
@@ -52,7 +52,7 @@ describe('VERIFY FROM CHAIN: the published attestation, checked with public data
     assert.equal(r.ok, true);
     assert.equal(r.sections.length, 3);
     assert.equal(r.sections[1].checks.length, 3, 'two period links and the head');
-    assert.equal(r.sections[2].checks.length, 12, 'twelve provenance checks on the one active slot');
+    assert.equal(r.sections[2].checks.length, 13, 'thirteen provenance checks on the one active slot');
   });
 });
 

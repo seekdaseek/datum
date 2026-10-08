@@ -11,7 +11,8 @@
 //       deploy a contract that emits a Sync event with any numbers in it, so
 //       an unrecognised pool is rejected outright.
 //   (2) the collateral and quote sides, their decimals, and the fee match
-//       the pool at refBlock; the quote side is an allowed USD stablecoin.
+//       the pool at refBlock; the quote side is a USD stablecoin (rate 1.0)
+//       or a priced quote whose quoteRate equals its oracle at refBlock.
 //   (3) the log at (syncBlock, logIndex) is that pool's Sync, inside syncTx,
 //       and its raw reserves normalise to exactly reserveX / reserveY.
 //   (4) there is NO later Sync from the pool in (syncBlock:logIndex, refBlock].
@@ -46,6 +47,18 @@ export const CHAINS = {
     stables: {
       '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'USDC',
     },
+    // Quote assets that are not USD, valued at a public oracle. The slot's
+    // quoteRate must equal this oracle's price at refBlock. This values the
+    // quote leg AT THE MARK; the README measures that leg's depth.
+    priced: {
+      '0x4200000000000000000000000000000000000006': {
+        symbol: 'WETH',
+        decimals: 18,
+        source: 'Moonwell oracle, mWETH',
+        comptroller: '0xfbb21d0380bee3312b33c4353c8936a0f13ef26c',
+        mToken: '0x628ff693426583d9a7fb391e54366292f509d457',
+      },
+    },
   },
 };
 
@@ -58,7 +71,12 @@ const SEL = {
   stable: '0x22be3de1',
   getPool: '0x79bc57d5', // getPool(address,address,bool)
   getFee: '0xcc56b2c5', // getFee(address,bool)
+  oracle: '0x7dc0d1d0', // Comptroller.oracle()
+  getUnderlyingPrice: '0xfc57d4df', // getUnderlyingPrice(address)
 };
+
+/** USD micro-units per one STABLE quote token. */
+export const USD_RATE = 1_000_000n;
 
 // ---------------------------------------------------------------------------
 // encoding helpers
@@ -83,6 +101,17 @@ export const normaliseUp = (raw, dec) => (raw * MICRO + pow10(dec) - 1n) / pow10
 /** Quote side: floor(raw * 1e6 / 10^dec). Rounds against the prover. */
 export const normaliseDown = (raw, dec) => (raw * MICRO) / pow10(dec);
 
+// Public RPCs answer 429 under bursts. Retry a rate-limited call twice with a
+// short pause before moving to the next RPC.
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+const fetchWithBackoff = async (fetchImpl, url, init) => {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetchImpl(url, init);
+    if (res.status !== 429 || attempt >= 2) return res;
+    await pause(800 * (attempt + 1));
+  }
+};
+
 // ---------------------------------------------------------------------------
 // JSON-RPC with fallback
 // ---------------------------------------------------------------------------
@@ -94,7 +123,7 @@ export const makeRpc = (chainId, { fetchImpl = fetch } = {}) => {
     const errors = [];
     for (const [url] of chain.rpcs) {
       try {
-        const res = await fetchImpl(url, {
+        const res = await fetchWithBackoff(fetchImpl, url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
@@ -157,6 +186,20 @@ export const readPool = async (rpc, pool, block) => {
   return { pool: p, factory, recognised: true, kind: fdef.kind, label: fdef.label, syncTopic: fdef.syncTopic, token0, token1, dec0, dec1, stable, vouched, feeBps };
 };
 
+/**
+ * The USD rate of a quote token at a block: USD micro-units per whole token.
+ * USD stablecoins are 1.0 by definition. Priced assets read Moonwell's oracle,
+ * which scales prices by 1e(36 - decimals); the rate is floored.
+ */
+export const quoteRateAt = async (rpc, quote, block) => {
+  if (rpc.chain.stables[quote]) return { rate: USD_RATE, symbol: rpc.chain.stables[quote], source: 'USD stablecoin, 1.0' };
+  const pq = rpc.chain.priced?.[quote];
+  if (!pq) return null;
+  const oracle = asAddress(await rpc.ethCall(pq.comptroller, SEL.oracle, block));
+  const price = word(await rpc.ethCall(oracle, SEL.getUnderlyingPrice + addrWord(pq.mToken), block), 0);
+  return { rate: (price * MICRO) / pow10(36 - pq.decimals), symbol: pq.symbol, source: `${pq.source} at the reference block` };
+};
+
 const decodeSync = (log) => ({
   blockNumber: BigInt(log.blockNumber),
   logIndex: BigInt(log.logIndex),
@@ -184,7 +227,8 @@ export const buildVenueSlot = async ({ chainId, pool, collateral, refBlock, look
   const collateralIsToken0 = col === facts.token0;
   if (!collateralIsToken0 && col !== facts.token1) throw new Error(`${collateral} is not a side of ${pool}`);
   const quote = collateralIsToken0 ? facts.token1 : facts.token0;
-  if (!rpc.chain.stables[quote]) throw new Error(`quote side ${quote} is not an allowed USD stablecoin`);
+  const qr = await quoteRateAt(rpc, quote, ref);
+  if (!qr) throw new Error(`quote side ${quote} is neither a USD stablecoin nor a priced quote`);
 
   // Walk back from refBlock in chunks until the most recent Sync is found.
   let latest = null;
@@ -216,8 +260,9 @@ export const buildVenueSlot = async ({ chainId, pool, collateral, refBlock, look
       refTime: BigInt(blk.timestamp),
       reserveX: normaliseUp(rawX, decX),
       reserveY: normaliseDown(rawY, decY),
+      quoteRate: qr.rate,
     },
-    evidence: { ...facts, collateral: col, quote, quoteSymbol: rpc.chain.stables[quote], rawX, rawY },
+    evidence: { ...facts, collateral: col, quote, quoteSymbol: qr.symbol, quoteRateSource: qr.source, rawX, rawY },
   };
 };
 
@@ -247,7 +292,9 @@ export const verifyVenueSlot = async (slot, { fetchImpl } = {}) => {
   check('factory vouches for the pool (volatile, not stable)', f.vouched, `stable=${f.stable}`);
   const col = slot.collateralIsToken0 ? f.token0 : f.token1;
   const quote = slot.collateralIsToken0 ? f.token1 : f.token0;
-  check('quote side is an allowed USD stablecoin', !!rpc.chain.stables[quote], quote);
+  const qr = await quoteRateAt(rpc, quote, ref);
+  check('quote side is a USD stablecoin or a priced quote', !!qr, `${qr?.symbol ?? 'unknown'} ${quote}`);
+  check('quoteRate matches its source at refBlock', !!qr && qr.rate === BigInt(slot.quoteRate ?? 0n), qr ? `${qr.source}: ${qr.rate} vs slot ${slot.quoteRate}` : 'no source');
   const decX = slot.collateralIsToken0 ? f.dec0 : f.dec1;
   const decY = slot.collateralIsToken0 ? f.dec1 : f.dec0;
   check('decimals match the tokens', BigInt(decX) === BigInt(slot.decX) && BigInt(decY) === BigInt(slot.decY), `collateral ${decX}, quote ${decY}`);

@@ -157,6 +157,41 @@ describe('FEE: v1 ignored the pool fee; v2 does not', () => {
 });
 
 // ===========================================================================
+// NEW IN v2: A SLOT MAY BE QUOTED IN WETH, VALUED AT A PUBLIC RATE
+// ===========================================================================
+describe('QUOTE RATE: a WETH-quoted slot is valued at its public USD rate', () => {
+  // Moonwell's WELL book against the Aerodrome WELL/WETH pool, Base block
+  // 52,331,062: reserves in micro-units, 1% fee, WETH at $2,558.358868.
+  const WELL_X = 271_920_150n * MICRO;
+  const WELL_Y = 256_156_648n;            // 256.156648 WETH in micro-WETH
+  const WETH_RATE = 2_558_358_868n;       // USD micro per whole WETH
+  const wellPool = venue({ pool: poolOf(0x89), reserveX: WELL_X, reserveY: WELL_Y, feeBps: 100n, quoteRate: WETH_RATE });
+  const Q = 131_253_121n * MICRO;
+  const DEBT = 173_283n * MICRO;          // the 55% collateral factor's debt cap
+  const RATIO = 1_000_000n;
+
+  test('valued at the WETH rate the book clears its bar; at half that rate it does not', async () => {
+    const book = bookFor([wellPool], [Q], DEBT);
+    const usd = (book.proceeds[0] * WETH_RATE) / 1_000_000n; // USD micro-units
+    assert.ok(usd >= DEBT && usd / 2n < DEBT, `proceeds ${Number(usd) / 1e6} USD`);
+    assert.equal((await attest({ privateState: book, venues: [wellPool], ratio: RATIO })).covered, true);
+    const half = { ...wellPool, quoteRate: WETH_RATE / 2n };
+    assert.equal((await attest({ privateState: bookFor([half], [Q], DEBT), venues: [half], ratio: RATIO })).covered, false);
+  });
+
+  test('the rate is bound into venuesHash, so a different rate is a different venue array', () => {
+    const a = pureCircuits.venueDigest(padVenues([wellPool]));
+    const b = pureCircuits.venueDigest(padVenues([{ ...wellPool, quoteRate: WETH_RATE + 1n }]));
+    assert.notDeepEqual(a, b);
+  });
+
+  test('a zero rate cannot help the prover: it can only understate', async () => {
+    const zero = { ...wellPool, quoteRate: 0n };
+    assert.equal((await attest({ privateState: bookFor([zero], [Q], 1n), venues: [zero], ratio: RATIO })).covered, false);
+  });
+});
+
+// ===========================================================================
 // NEW IN v2: FRESHNESS ENFORCED BY THE LEDGER'S BLOCK TIME
 // ===========================================================================
 describe('FRESHNESS: reserves must be recent, judged by Midnight block time', () => {

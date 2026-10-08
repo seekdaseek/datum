@@ -19,6 +19,7 @@ export const FEE_SCALE = 10_000n;
 export const MICRO = 1_000_000n;     // micro-units per whole token
 export const UINT64_CAP = 1n << 64n; // Uint<64> is Uint<0..2^64>, exclusive
 export const MAX_REF_AGE = 21_600n;  // six hours
+export const USD_RATE = 1_000_000n;  // quoteRate of a USD stablecoin: 1.0
 
 // A fixed "now" for every simulated block, close to the recorded Base
 // reference block so real fixtures fall inside maxRefAge.
@@ -58,6 +59,7 @@ export const venue = (o = {}) => ({
   refTime: NOW - 60n,
   reserveX: 1_000_000n * MICRO,
   reserveY: 50_000_000n * MICRO,
+  quoteRate: USD_RATE,
   ...o,
 });
 
@@ -76,6 +78,7 @@ export const paddingSlot = () => ({
   refTime: 0n,
   reserveX: 1n,
   reserveY: 1n,
+  quoteRate: 0n,
 });
 
 export const padVenues = (slots) => {
