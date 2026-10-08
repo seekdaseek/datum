@@ -19,6 +19,7 @@
 #
 set -u
 N=${1:-10}
+FLOOR_MB=${FLOOR_MB:-500}   # override only to prove the rollback path fires
 API=http://127.0.0.1:3034
 WATCH="lictor lictor-felix partitio-relayer"
 LOG=/opt/datum/loadtest-$(date -u +%Y%m%dT%H%M%SZ).log
@@ -49,7 +50,7 @@ touch "$SAMPLER_FLAG"
   while [ -e "$SAMPLER_FLAG" ]; do
     a=$(avail); si=$(vmstat 1 2 | tail -1 | awk '{print $7}'); r=$(restarts)
     echo "sample $(date -u +%T) avail_MB=$a si=$si $r"
-    [ "$a" -lt 500 ] && { echo "TRIP avail $a < 500"; kill -USR1 $$; break; }
+    [ "$a" -lt "$FLOOR_MB" ] && { echo "TRIP avail $a < $FLOOR_MB"; kill -USR1 $$; break; }
     if [ "$si" -gt 0 ]; then hot=$((hot + 1)); else hot=0; fi
     [ "$hot" -ge 3 ] && { echo "TRIP swap-in active 3 samples"; kill -USR1 $$; break; }
     [ "$r" != "$BASE" ] && { echo "TRIP restart: $r vs $BASE"; kill -USR1 $$; break; }
