@@ -188,7 +188,7 @@ const main = async () => {
     await providers.privateStateProvider.set('book', ps);
     const call = await book.callTx.attest(pad8([b.venue], padding), b.ratio, BigInt(Math.floor(Date.now() / 1000)));
     const verdict = ledger((await providers.publicDataProvider.queryContractState(rec.address)).data).covered;
-    rec.attest = { ...txFields(call.public), period: period.toString(), covered: verdict, baseRefBlock: b.refBlock.toString(), figures: f, sources: b.sources };
+    rec.attest = { ...txFields(call.public), period: period.toString(), requiredRatio: Number(b.ratio) / 1e6, covered: verdict, baseRefBlock: b.refBlock.toString(), figures: f, sources: b.sources };
     log(`${stamp()} ${market}: ATTESTED period ${period}: ${verdict ? 'COVERED' : 'NOT COVERED'}, tx ${rec.attest.txHash} block ${rec.attest.block} ${rec.attest.status}`);
     writeRecord();
   }

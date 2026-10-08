@@ -17,8 +17,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : d; };
 const NET = arg('--network', 'preprod');
 const dep = JSON.parse(readFileSync(resolve(ROOT, `deployments/${NET}.json`), 'utf8'));
-const a = dep.book.attest;
-const f = a.figures;
+const books = Object.entries(dep.books).sort(([x]) => (x === 'WELL' ? -1 : 1)); // WELL first
 
 const C = { bg: '0D1220', card: '182033', fg: 'EEF2FA', dim: '8C9AB5', accent: '7FA8E8', bad: 'E4573D', warn: 'E0A44C', ok: '5BC98A' };
 const H = 'Calibri';
@@ -55,23 +54,31 @@ const body = (s, text, o) => s.addText(text, { fontFace: H, fontSize: 16, color:
   s.addText('Midnight Buildathon · Wave 2', { x: 0.6, y: 6.8, w: 8, h: 0.4, fontFace: H, fontSize: 12, color: C.dim });
 }
 
-// 2. the real book
+// 2. the real books
 {
-  const s = slide('A REAL BOOK', 'Moonwell’s AERO collateral on Base');
-  body(s, `All AERO supplied to Moonwell, against the most debt its ${Math.round(f.collateralFactor * 100)}% collateral factor lets it secure. Base block ${Number(a.baseRefBlock).toLocaleString('en-US')}. Exit: Aerodrome volatile AERO/USDC, 0.30% fee.`, { x: 0.6, y: 1.65, w: 12, h: 0.8 });
-  const cols = [
-    ['AT THE ORACLE MARK', x2(f.markedCoverage), `${usd(f.markedUsd)} at $${f.oraclePrice.toFixed(4)}`, C.fg, C.card],
-    ['DOES NOT EXIST AT EXIT', usd(f.gapUsd), `${f.gapPct.toFixed(1)}% of the marked value`, C.bad, '2A1418'],
-    ['AT REALISABLE EXIT', x2(f.realisableCoverage), `${usd(f.realisableUsd)} sold into the pool`, C.fg, C.card],
-  ];
-  cols.forEach(([k, big, sub, col, fill], i) => {
-    const x = 0.6 + i * 4.1;
-    card(s, x, 2.7, 3.85, 2.6, fill);
-    s.addText(k, { x, y: 2.9, w: 3.85, h: 0.4, align: 'center', fontFace: H, fontSize: 12, bold: true, color: C.dim, charSpacing: 2 });
-    s.addText(big, { x, y: 3.4, w: 3.85, h: 1.0, align: 'center', fontFace: H, fontSize: 44, bold: true, color: col });
-    s.addText(sub, { x, y: 4.5, w: 3.85, h: 0.5, align: 'center', fontFace: H, fontSize: 14, color: C.dim });
+  const s = slide('TWO REAL BOOKS', 'Moonwell’s WELL and AERO collateral on Base');
+  body(s, 'Everything supplied to each market, sold into its main exit (a factory-vouched Aerodrome x·y=k pool). The debt side is Moonwell’s borrowing cap for that collateral, the most that could be borrowed against it, not the borrows actually outstanding.', { x: 0.6, y: 1.65, w: 12, h: 0.8, fontSize: 15 });
+  books.forEach(([market, b], r) => {
+    const f = b.attest.figures;
+    const y = 2.6 + r * 2.05;
+    s.addText(`${market}`, { x: 0.6, y, w: 1.6, h: 0.5, fontFace: H, fontSize: 22, bold: true, color: C.accent });
+    s.addText(`${Math.round(f.supplied).toLocaleString('en-US')} supplied\ncap ${usd(f.debtUsd)}\nexit ${f.quote === 'WETH' ? 'WELL/WETH 1%' : 'AERO/USDC 0.30%'}`, { x: 0.6, y: y + 0.5, w: 2.4, h: 1.2, fontFace: H, fontSize: 12, color: C.dim, valign: 'top' });
+    const cols = [
+      ['AT THE ORACLE MARK', x2(f.markedCoverage), usd(f.markedUsd), C.fg, C.card],
+      ['DOES NOT EXIST AT EXIT', usd(f.gapUsd), `${f.gapPct.toFixed(1)}% of marked`, C.bad, '2A1418'],
+      ['AT REALISABLE EXIT', x2(f.realisableCoverage), usd(f.realisableUsd), C.fg, C.card],
+      ['VERDICT ON CHAIN', b.attest.covered === false ? 'NOT COVERED' : 'COVERED', `required ratio ${(b.attest.requiredRatio ?? 1).toFixed(2)}x`, b.attest.covered === false ? C.bad : C.ok, C.card],
+    ];
+    cols.forEach(([k, big, sub, col, fill], i) => {
+      const x = 3.1 + i * 2.45;
+      card(s, x, y, 2.3, 1.8, fill);
+      s.addText(k, { x, y: y + 0.12, w: 2.3, h: 0.35, align: 'center', fontFace: H, fontSize: 10, bold: true, color: C.dim, charSpacing: 1 });
+      s.addText(big, { x, y: y + 0.5, w: 2.3, h: 0.7, align: 'center', fontFace: H, fontSize: i === 3 ? 20 : 28, bold: true, color: col });
+      s.addText(sub, { x, y: y + 1.2, w: 2.3, h: 0.4, align: 'center', fontFace: H, fontSize: 12, color: C.dim });
+    });
   });
-  body(s, `${Math.round(f.suppliedAero).toLocaleString('en-US')} AERO supplied · debt it may secure ${usd(f.debtUsd)}. Every input is public on Base; the page recomputes it from a public node. This book is public so judges can check it; a lender’s would not be.`, { x: 0.6, y: 5.6, w: 12, h: 1 });
+  const leg = books.find(([m]) => m === 'WELL')?.[1].attest.figures.quoteLeg;
+  if (leg) body(s, `WELL’s pool is quoted in WETH, valued at Moonwell’s own WETH price. Forced through Base’s only x·y=k WETH/USDC pool it would fetch ${leg.extraImpactPct.toFixed(1)}% less.`, { x: 0.6, y: 6.75, w: 12, h: 0.5, fontSize: 13 });
 }
 
 // 3. three checks, one book
@@ -149,18 +156,17 @@ const body = (s, text, o) => s.addText(text, { fontFace: H, fontSize: 16, color:
 // 7. deployed
 {
   const s = slide('IT IS DEPLOYED', 'Live on Midnight Preprod');
-  const rows = [
-    ['BOOK CONTRACT', split(dep.book.address)],
-    ['ATTEST TX', split(a.txHash)],
-    ['BLOCK', `${a.block}   ·   ${a.status}`],
-    ['DEMO CONTRACT', split(dep.demo.address)],
-  ];
-  if (arg('--demo-tx')) rows.push(['DEMO ATTEST TX', `${split(arg('--demo-tx'))}`]);
+  const rows = [];
+  for (const [market, b] of books) {
+    rows.push([`${market} BOOK`, split(b.address)]);
+    rows.push([`${market} ATTEST TX`, `${split(b.attest.txHash)}`]);
+  }
+  rows.push(['DEMO CONTRACT', split(dep.demo.address)]);
   rows.forEach(([k, v], i) => {
-    s.addText(k, { x: 0.6, y: 1.8 + i * 0.95, w: 2.8, h: 0.8, fontFace: H, fontSize: 13, bold: true, color: C.dim, charSpacing: 2, valign: 'top' });
-    s.addText(v, { x: 3.4, y: 1.8 + i * 0.95, w: 9.3, h: 0.85, fontFace: M, fontSize: 16, color: C.fg, valign: 'top' });
+    s.addText(k, { x: 0.6, y: 1.7 + i * 0.8, w: 2.8, h: 0.7, fontFace: H, fontSize: 12, bold: true, color: C.dim, charSpacing: 2, valign: 'top' });
+    s.addText(v, { x: 3.4, y: 1.7 + i * 0.8, w: 9.3, h: 0.75, fontFace: M, fontSize: 14, color: C.fg, valign: 'top' });
   });
-  body(s, 'Check it cold: node scripts/verify.mjs --network preprod  (VERIFIED, exit 0)  ·  --tamper  (MISMATCH, exit 1)', { x: 0.6, y: 6.6, w: 12, h: 0.5, fontSize: 14 });
+  body(s, 'Check it cold: node scripts/verify.mjs --network preprod  (both books VERIFIED, exit 0)  ·  --tamper  (MISMATCH, exit 1)', { x: 0.6, y: 6.8, w: 12, h: 0.5, fontSize: 13 });
 }
 
 // 8. who and how much

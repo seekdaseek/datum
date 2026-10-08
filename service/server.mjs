@@ -29,6 +29,7 @@
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { ensureProver, NEED_MB } from './capacity.mjs';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, appendFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -268,18 +269,31 @@ const proverHealthy = async () => { try { return (await fetch(`${net.proofServer
 let proverStopTimer = null;
 status.prover = PROVER_PM2 ? 'on demand' : 'external';
 
-/** Make sure the proof server answers. Returns true if it had to be started. */
-const proverUp = async () => {
+/**
+ * Make sure the proof server answers. If it has to be started, wait first for
+ * enough free memory (service/capacity.mjs): the job shows "waiting for
+ * capacity" and the prover is never started into an OOM. Returns true if it
+ * had to be started.
+ */
+const proverUp = async (j) => {
   clearTimeout(proverStopTimer);
-  if (await proverHealthy()) { status.prover = 'running'; return false; }
-  if (!PROVER_PM2) throw new Error('the proof server is not answering');
-  status.prover = 'starting';
-  await pm2('start', PROVER_PM2);
-  for (let i = 0; i < 60; i++) {
-    if (await proverHealthy()) { status.prover = 'running'; return true; }
-    await sleep(1000);
+  if (!PROVER_PM2) {
+    if (await proverHealthy()) { status.prover = 'running'; return false; }
+    throw new Error('the proof server is not answering');
   }
-  throw new Error('the proof server did not start');
+  const r = await ensureProver({
+    healthy: proverHealthy,
+    start: async () => { status.prover = 'starting'; await pm2('start', PROVER_PM2); },
+    onWait: (mb, waitedMs) => {
+      status.prover = `waiting for capacity (${mb} MB available, needs ${NEED_MB})`;
+      if (j) {
+        if (j.status !== 'waiting-for-capacity') step(j, 'waiting-for-capacity');
+        j.capacity = { availableMB: mb, needMB: NEED_MB, waitedS: Math.round(waitedMs / 1000) };
+      }
+    },
+  });
+  status.prover = 'running';
+  return r.started;
 };
 
 /** Stop the proof server once nothing has needed it for PROVER_IDLE_MS. */
@@ -307,6 +321,7 @@ const publicJob = (j) => ({
   status: j.status,
   position: j.status === 'queued' ? queue.indexOf(j) + 1 : 0,
   steps: j.steps,
+  capacity: j.capacity,
   result: j.result,
   error: j.error,
   createdAt: j.createdAt,
@@ -335,7 +350,7 @@ const runJob = async (j) => {
     baseRefBlock: String(b.refBlock),
   };
 
-  if (await proverUp()) step(j, 'waking-prover');
+  if (await proverUp(j)) step(j, 'waking-prover');
   step(j, 'preparing');
   const { ledger } = await import('../build/datum-full/contract/index.js');
   const count = ledger((await providers.publicDataProvider.queryContractState(DEMO_CONTRACT)).data).attestationCount;

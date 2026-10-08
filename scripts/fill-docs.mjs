@@ -38,6 +38,7 @@ for (const [market, b] of Object.entries(dep.books ?? {})) {
   P('TX_SHORT', `${a.txHash.slice(0, 10)}…${a.txHash.slice(-6)}`);
   P('BLOCK', int(a.block));
   P('VERDICT', a.covered === false ? 'NOT COVERED' : 'COVERED');
+  P('RATIO', `${(a.requiredRatio ?? 1).toFixed(2)}x`);
   P('SUPPLIED', int(f.supplied));
   P('MARK_X', x2(f.markedCoverage));
   P('REAL_X', x2(f.realisableCoverage));

@@ -150,7 +150,7 @@ const realBook = (net, market, rec) => {
     el('div', 'tcol', el('div', 'tlabel', 'At realisable exit'), el('div', 'tbig', x2(f.realisableCoverage)), el('div', 'tsub', `${usd(f.realisableUsd)} sold into the pool`)),
   );
   s.append(grid);
-  s.append(el('p', 'lede small', `${num(f.supplied)} ${market} supplied · debt it may secure ${usd(f.debtUsd)} · coverage = value ÷ that debt · verdict on chain: ${a.covered === false ? 'NOT COVERED' : 'COVERED'} at Moonwell’s own 1.00x`));
+  s.append(el('p', 'lede small', `The debt side is Moonwell’s borrowing cap for this collateral: ${usd(f.debtUsd)}, ${Math.round(f.collateralFactor * 100)}% of the marked value, the most that could be borrowed against ${num(f.supplied)} ${market}. It is not the borrows actually outstanding. Coverage is value ÷ that cap. Attested at a required ratio of ${(a.requiredRatio ?? 1).toFixed(2)}x; verdict: ${a.covered === false ? 'NOT COVERED' : 'COVERED'}.`));
   if (f.quoteLeg) {
     const l = f.quoteLeg;
     s.append(el('p', 'lede small', `The pool is quoted in WETH, so the ${num(l.wethSold, 2)} WETH it pays out is valued at Moonwell’s own WETH price, at the mark. Measured against the only x·y=k WETH/USDC pool on Base (${num(l.wethReserve)} WETH / ${usd(l.usdcReserve)}), selling it there would fetch ${usd(l.throughPoolUsd)}, ${l.extraImpactPct.toFixed(1)}% less. WETH’s deeper concentrated-liquidity pools are not measured here.`));
@@ -255,6 +255,7 @@ const attestationCard = (net, lib, { L, tx }, address, label) => {
 const STEP_LABEL = {
   queued: 'Queued',
   'reading-base': 'Reading fresh reserves from Base',
+  'waiting-for-capacity': 'Waiting for capacity on the shared host',
   'waking-prover': 'Starting the prover (it sleeps when idle)',
   preparing: 'Preparing the private book',
   proving: 'Proving in zero knowledge',
@@ -356,7 +357,7 @@ const attestSection = (net, lib, preview, mountDemo) => {
     progress.innerHTML = '';
     const steps = j.steps;
     const done = new Set(steps.map((x) => x.step));
-    const order = ['queued', 'reading-base', ...(done.has('waking-prover') ? ['waking-prover'] : []), 'preparing', 'proving', 'paying-dust', 'submitting', 'confirming', 'landed'];
+    const order = ['queued', 'reading-base', ...(done.has('waiting-for-capacity') ? ['waiting-for-capacity'] : []), ...(done.has('waking-prover') ? ['waking-prover'] : []), 'preparing', 'proving', 'paying-dust', 'submitting', 'confirming', 'landed'];
     const at = Object.fromEntries(steps.map((x) => [x.step, Date.parse(x.at)]));
     for (const [i, st] of order.entries()) {
       const next = order.slice(i + 1).find((n) => at[n]);
@@ -364,7 +365,7 @@ const attestSection = (net, lib, preview, mountDemo) => {
       const secs = at[st] && st !== 'landed' ? (((next ? at[next] : Date.now()) - at[st]) / 1000).toFixed(0) : '';
       progress.append(el('div', `step ${done.has(st) ? (isCur ? 'cur' : 'done') : 'todo'}`,
         el('span', 'smark', done.has(st) ? (isCur ? '' : '✔') : ''),
-        el('span', 'slabel', STEP_LABEL[st] + (st === 'queued' && j.position > 0 ? ` (position ${j.position})` : '')),
+        el('span', 'slabel', STEP_LABEL[st] + (st === 'queued' && j.position > 0 ? ` (position ${j.position})` : '') + (st === 'waiting-for-capacity' && j.capacity ? `: ${j.capacity.availableMB} MB free, the prover needs ${j.capacity.needMB}; retrying every 30 s for up to 10 min` : '')),
         el('span', 'stime', secs ? `${secs}s` : '')));
     }
     if (j.status === 'failed') progress.append(el('div', 'step bad', el('span', 'smark', '✘'), el('span', 'slabel', `Failed: ${j.error}`)));
@@ -425,7 +426,8 @@ const attestSection = (net, lib, preview, mountDemo) => {
     if (!net.api) { setPill('none'); pill.querySelector('.ptext').textContent = 'No hosted service on this network.'; return; }
     try {
       const st = await (await fetch(`${net.api}/api/status`)).json();
-      const extra = st.state === 'ready' || st.state === 'proving' ? ` · queue ${st.queue} · ${st.limits.perIpPerHour} per visitor per hour` : '';
+      const extra = (st.state === 'ready' || st.state === 'proving' ? ` · queue ${st.queue} · ${st.limits.perIpPerHour} per visitor per hour` : '')
+        + (typeof st.prover === 'string' && st.prover.startsWith('waiting for capacity') ? ` · prover ${st.prover}` : '');
       setPill(st.state, extra);
     } catch {
       setPill('unreachable');
