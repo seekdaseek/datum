@@ -18,7 +18,7 @@ import { resolve } from 'node:path';
 import { proofDataIntoSerializedPreimage } from '@midnight-ntwrk/compact-runtime';
 import { httpClientProvingProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { deploy, attestOn, bookFor, venue, poolOf, MICRO, UINT64_CAP, realisableProceeds, padZeros, nonceOf } from './harness.mjs';
+import { deploy, attestOn, bookFor, venue, poolOf, MICRO, UINT64_CAP, realisableProceeds, padZeros, nonceOf, ATTESTOR_SECRET } from './harness.mjs';
 
 const PROOF_SERVER = process.env.PROOF_SERVER ?? 'http://localhost:6300';
 const zk = new NodeZkConfigProvider(resolve(import.meta.dirname, '../build/datum-full'));
@@ -75,10 +75,10 @@ describe('the real ZK checker accepts what the simulator accepts', () => {
 
   test('maximum-width inputs', async () => {
     const MAX = UINT64_CAP - 1n;
-    const big = venue({ reserveX: MAX, reserveY: MAX, quoteRate: MAX, syncBlock: (1n << 32n) - 2n, refBlock: (1n << 32n) - 1n });
+    const big = venue({ reserveX: MAX, reserveY: MAX, quoteRate: (1n << 40n) - 1n, syncBlock: (1n << 32n) - 2n, refBlock: (1n << 32n) - 1n });
     const p = realisableProceeds(MAX, MAX, MAX, 30n);
     const dep = await deploy();
-    await attestOn(dep, { privateState: { positions: padZeros([MAX]), proceeds: padZeros([p]), debt: 1n, nonce: nonceOf(1) }, venues: [big], ratio: R });
+    await attestOn(dep, { privateState: { positions: padZeros([MAX]), proceeds: padZeros([p]), debt: 1n, nonce: nonceOf(1), attestorSecret: ATTESTOR_SECRET }, venues: [big], ratio: R });
     await zkCheck(dep.lastProofData);
   });
 });

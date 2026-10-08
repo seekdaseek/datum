@@ -125,7 +125,7 @@ export struct VenueSlot {
   refTime: Uint<64>;          // unix timestamp of refBlock
   reserveX: Uint<64>;         // collateral reserve, micro-units, rounded up
   reserveY: Uint<64>;         // quote reserve, micro-units, rounded down
-  quoteRate: Uint<64>;        // USD micro-units per whole quote token
+  quoteRate: Uint<40>;        // USD micro-units per whole quote token (< $1.1M)
 }
 
 // The preimage of the book commitment. Including the previous head and the
@@ -166,8 +166,10 @@ export struct AttestationRecord {
 // Number of attestations. Also the next period number.
 export ledger attestationCount: Counter;
 
-// hash(domain, attestorSecret). Only the holder of the secret can attest.
-export sealed ledger attestor: Bytes<32>;
+// hash(domain, attestorSecret). Only the holder of the secret can attest,
+// and only the holder can rotate it (rotateAttestor), so a leaked or lost
+// key is replaceable rather than fatal.
+export ledger attestor: Bytes<32>;
 
 // Maximum seconds between the reference block's timestamp and inclusion on
 // Midnight. Fixed at deployment.
@@ -179,9 +181,10 @@ export ledger head: Bytes<32>;
 export ledger prevHead: Bytes<32>;
 
 // The period number the current head was committed at. Read back by the
-// continuity check instead of computing `period - 1`: Compact evaluates BOTH
-// sides of a conditional in the ZK circuit, so `period - 1` at period 0 wraps
-// to r - 1 in the scalar field and reaches the hash as a malformed Uint<64>.
+// continuity check instead of computing `period - 1`. In the ZK circuit the
+// asserts inside an untaken branch are guarded, but its arithmetic and casts
+// are still constrained: `period - 1` at period 0 wraps to r - 1 in the
+// scalar field and reaches the hash as a malformed Uint<64>.
 // The JS simulator skips the untaken branch and never sees it; the proof
 // server rejects it ("Inputs did not match alignment"). Found on the local
 // chain, 2026-10-08.
@@ -250,6 +253,15 @@ constructor(refAge: Uint<32>) {
 }
 
 // ---------------------------------------------------------------------------
+// KEY ROTATION — the current attestor replaces its own key
+// ---------------------------------------------------------------------------
+export circuit rotateAttestor(newKey: Bytes<32>): [] {
+  assert(attestor == attestorKey(attestorSecret()), "datum: caller is not the registered attestor");
+  // DISCLOSE: the new key is a hash of the new secret, computed off-chain.
+  attestor = disclose(newKey);
+}
+
+// ---------------------------------------------------------------------------
 // ONE SLOT — every check that needs only the slot and its two private numbers
 // (collateral sold q, claimed proceeds p). Distinctness needs the whole array
 // and stays in attest.
@@ -265,20 +277,24 @@ circuit checkSlot(slot: VenueSlot, q: Uint<64>, p: Uint<64>, age: Uint<32>): [] 
   assert(slot.feeBps < 10000, "datum: feeBps must be below 10000");
 
   if (isActive(slot)) {
-    // FRESHNESS, enforced by the ledger: the reference block's timestamp
-    // is in the past, and inclusion happens within maxRefAge of it. These
+    // FRESHNESS, enforced by the ledger: the reference block's timestamp is
+    // strictly before the inclusion block's time, and inclusion happens
+    // strictly less than maxRefAge seconds after it. These
     // are kernel queries in the public transcript, re-evaluated by the
     // node against the real block, so a prover cannot fake them.
     const rt = slot.refTime;
     assert(slot.refBlock >= slot.syncBlock, "datum: refBlock precedes the Sync it vouches for");
-    // No positivity assert on quoteRate: a zero rate only understates
-    // proceeds, so it can make a verdict falsely NOT COVERED, never falsely
-    // COVERED. The verifier checks every rate against its source anyway.
+    // quoteRate is a public multiplier on proceeds. It is bounded by its type
+    // (Uint<40>: under $1.1M per quote token) and must be non-zero on an
+    // active slot; its exact value is checked against the oracle off-chain.
+    assert(slot.quoteRate != 0, "datum: an active slot needs a non-zero quoteRate");
     assert(blockTimeGt(rt), "datum: reference block is in the future");
     assert(blockTimeLt((rt + age) as Uint<64>), "datum: reference block is older than maxRefAge");
   } else {
-    // PADDING contributes nothing. Belt and braces with the X > 0 rule.
+    // PADDING contributes nothing and commits nothing: no proceeds, and no
+    // collateral position hidden in the book commitment behind an empty slot.
     assert(p == 0, "datum: a padding slot cannot claim proceeds");
+    assert(q == 0, "datum: a padding slot cannot hold a position");
   }
 
   // REALISABLE PROCEEDS WITH FEE. Selling q into (X, Y) with fee f returns

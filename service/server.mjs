@@ -178,19 +178,23 @@ const pad8 = (xs, fill) => [...xs, ...Array(SLOTS - xs.length).fill(null).map(fi
 const hexOf = (u) => Buffer.from(u).toString('hex');
 const bytesOf = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
 
-// The last opening is also kept in a plain file. If the encrypted store were
-// lost, the demo chain could not continue: every period must prove it holds
-// the previous one. The demo books are public sample data, so this file holds
-// nothing private.
-const saveLastOpening = (o) => {
+// Every period's opening is kept in a plain file, keyed by period, and it is
+// written BEFORE the transaction is submitted (write-ahead). If the process
+// died after the attestation landed but before a write, the demo chain could
+// never continue: every period must prove it holds the previous opening, and
+// no circuit resets the chain. The demo books are public sample data, so this
+// file holds nothing private.
+const readOpenings = () => (existsSync(LAST_OPENING) ? JSON.parse(readFileSync(LAST_OPENING, 'utf8')) : {});
+const saveOpening = (period, o) => {
+  const all = readOpenings();
+  all[String(period)] = { positions: o.positions.map(String), debt: String(o.debt), nonce: hexOf(o.nonce) };
   const tmp = `${LAST_OPENING}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ positions: o.positions.map(String), debt: String(o.debt), nonce: hexOf(o.nonce) }), { mode: 0o600 });
+  writeFileSync(tmp, JSON.stringify(all), { mode: 0o600 });
   renameSync(tmp, LAST_OPENING);
 };
-const loadLastOpening = () => {
-  if (!existsSync(LAST_OPENING)) return null;
-  const j = JSON.parse(readFileSync(LAST_OPENING, 'utf8'));
-  return { positions: j.positions.map(BigInt), debt: BigInt(j.debt), nonce: bytesOf(j.nonce) };
+const loadOpening = (period) => {
+  const j = readOpenings()[String(period)];
+  return j ? { positions: j.positions.map(BigInt), debt: BigInt(j.debt), nonce: bytesOf(j.nonce) } : null;
 };
 
 const refreshSponsor = async () => {
@@ -224,6 +228,11 @@ const tracked = (provider, method, label) => ({
 });
 
 const boot = async () => {
+  // Secrets are 32-byte hex. A malformed one would be truncated silently by
+  // the hex decoder and only fail at the first job; refuse it at start.
+  for (const k of ['SPONSOR_SEED', 'DEMO_ATTESTOR_SECRET']) {
+    if (!/^[0-9a-fA-F]{64}$/.test(need(k))) throw new Error(`${k} is not 64 hex characters`);
+  }
   status.state = 'syncing';
   ctx = await openWallet({ net, seedHex: need('SPONSOR_SEED'), statePath: CHECKPOINT });
   console.log(`sponsor ${ctx.address} — ${ctx.restoredFrom ? `restored from checkpoint ${ctx.restoredFrom}` : 'cold start'}`);
@@ -354,8 +363,8 @@ const runJob = async (j) => {
   step(j, 'preparing');
   const { ledger } = await import('../build/datum-full/contract/index.js');
   const count = ledger((await providers.publicDataProvider.queryContractState(DEMO_CONTRACT)).data).attestationCount;
-  const prior = loadLastOpening();
-  if (count > 0n && !prior) throw new Error('demo chain cannot continue: the previous opening is missing');
+  const prior = count > 0n ? loadOpening(count - 1n) : null;
+  if (count > 0n && !prior) throw new Error(`demo chain cannot continue: the opening of period ${count - 1n} is missing`);
   const ps = {
     attestorSecret: bytesOf(need('DEMO_ATTESTOR_SECRET')),
     positions: pad8([q], () => 0n),
@@ -365,9 +374,9 @@ const runJob = async (j) => {
     prev: count > 0n ? prior : emptyOpening(),
   };
   await providers.privateStateProvider.set('demo', ps);
+  saveOpening(count, ps); // write-ahead: on disk before the transaction can land
 
   const call = await demo.callTx.attest(pad8([b.venue], padding), b.ratio, BigInt(Math.floor(Date.now() / 1000)));
-  saveLastOpening({ positions: ps.positions, debt: ps.debt, nonce: ps.nonce });
 
   const after = ledger((await providers.publicDataProvider.queryContractState(DEMO_CONTRACT)).data);
   j.result = {
@@ -451,7 +460,7 @@ const server = createServer(async (req, res) => {
       if (status.state === 'starting' || status.state === 'syncing') return send(req, res, 503, { error: `sponsor is ${status.state}; try again shortly`, state: status.state });
       if (status.state === 'low-dust') return send(req, res, 503, { error: 'sponsor DUST is regenerating; try again later', state: status.state });
       const body = await readBody(req);
-      if (!body.book || !(body.book in BOOKS || body.book === 'custom')) return send(req, res, 400, { error: 'pick a book: ' + [...Object.keys(BOOKS), 'custom'].join(', ') });
+      if (typeof body.book !== 'string' || !(Object.hasOwn(BOOKS, body.book) || body.book === 'custom')) return send(req, res, 400, { error: 'pick a book: ' + [...Object.keys(BOOKS), 'custom'].join(', ') });
       if (body.book === 'custom') {
         // validate before queuing so a bad edit fails fast, not after a wait
         for (const [k, [lo, hi]] of Object.entries(LIMITS)) {
@@ -468,7 +477,7 @@ const server = createServer(async (req, res) => {
       if (recent.length >= RATE_PER_HOUR) return send(req, res, 429, { error: `limit is ${RATE_PER_HOUR} attestations per hour per visitor` }, { 'Retry-After': '900' });
       if (queue.length >= QUEUE_MAX) return send(req, res, 429, { error: 'the queue is full; try again in a few minutes' }, { 'Retry-After': '120' });
       perIp.set(ip, [...recent, now]);
-      const j = { id: randomUUID(), ip, ipHash: ipHash(ip), spec: { book: body.book, custom: body.custom }, bookName: BOOKS[body.book]?.name ?? 'Custom AERO book', status: 'queued', steps: [{ step: 'queued', at: new Date().toISOString() }], createdAt: new Date().toISOString() };
+      const j = { id: randomUUID(), ip, ipHash: ipHash(ip), spec: { book: body.book, custom: body.custom }, bookName: Object.hasOwn(BOOKS, body.book) ? BOOKS[body.book].name : 'Custom AERO book', status: 'queued', steps: [{ step: 'queued', at: new Date().toISOString() }], createdAt: new Date().toISOString() };
       jobs.set(j.id, j);
       queue.push(j);
       setImmediate(pump);

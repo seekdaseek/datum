@@ -38,7 +38,7 @@ export const witnesses = {
   claimedProceeds: ({ privateState }) => [privateState, privateState.proceeds],
   debtAmount: ({ privateState }) => [privateState, privateState.debt],
   commitmentNonce: ({ privateState }) => [privateState, privateState.nonce],
-  attestorSecret: ({ privateState }) => [privateState, privateState.attestorSecret ?? ATTESTOR_SECRET],
+  attestorSecret: ({ privateState }) => [privateState, privateState.attestorSecret],
   previousOpening: ({ privateState }) => [privateState, privateState.prev ?? emptyOpening()],
 };
 
@@ -114,11 +114,12 @@ export const bookFor = (venues, sizes, debt, nonceByte = 1) => {
     proceeds: vs.map((v, i) => (v.chainId === 0n ? 0n : realisableProceeds(v.reserveX, v.reserveY, positions[i], v.feeBps))),
     debt,
     nonce: nonceOf(nonceByte),
+    attestorSecret: ATTESTOR_SECRET,
   };
 };
 
 /** Deploy a fresh contract. Returns a mutable deployment handle. */
-export const deploy = async ({ privateState = {}, refAge = MAX_REF_AGE } = {}) => {
+export const deploy = async ({ privateState = { attestorSecret: ATTESTOR_SECRET }, refAge = MAX_REF_AGE } = {}) => {
   const contract = new Contract(witnesses);
   const address = sampleContractAddress();
   const initial = await contract.initialState(

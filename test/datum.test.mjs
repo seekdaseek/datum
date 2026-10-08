@@ -1,3 +1,4 @@
+import { createCircuitContext } from '@midnight-ntwrk/compact-runtime';
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -95,6 +96,11 @@ describe('zero-padding cannot be used to smuggle proceeds', () => {
       /a padding slot cannot claim proceeds/,
     );
   });
+  test('a padding slot holding a position is rejected: nothing hides behind an empty slot', async () => {
+    const book = bookFor([aeroPool], [BOOK_Q], 5_500_000n * MICRO);
+    book.positions[2] = 1_000n * MICRO;
+    await assert.rejects(attest({ privateState: book, venues: [aeroPool], ratio: RATIO_120 }), /a padding slot cannot hold a position/);
+  });
 
   test('the same smuggled book would otherwise have passed', () => {
     const debt = 5_500_000n * MICRO;
@@ -185,9 +191,14 @@ describe('QUOTE RATE: a WETH-quoted slot is valued at its public USD rate', () =
     assert.notDeepEqual(a, b);
   });
 
-  test('a zero rate cannot help the prover: it can only understate', async () => {
+  test('an active slot with a zero rate is rejected', async () => {
     const zero = { ...wellPool, quoteRate: 0n };
-    assert.equal((await attest({ privateState: bookFor([zero], [Q], 1n), venues: [zero], ratio: RATIO })).covered, false);
+    await assert.rejects(attest({ privateState: bookFor([zero], [Q], 1n), venues: [zero], ratio: RATIO }), /needs a non-zero quoteRate/);
+  });
+
+  test('a rate at 2^40 is rejected by its type: an inflated multiplier cannot be passed in', async () => {
+    const huge = { ...wellPool, quoteRate: 1n << 40n };
+    await assert.rejects(attest({ privateState: bookFor([huge], [Q], DEBT), venues: [huge], ratio: RATIO }), /expected value of type/);
   });
 });
 
@@ -269,6 +280,29 @@ describe('ATTESTOR: only the registered key can attest', () => {
   });
 });
 
+describe('ROTATION: the attestor can replace its key, and only the attestor', () => {
+  const rotate = (dep, secret, newKey) => {
+    const ctx = createCircuitContext(dep.address, '0'.repeat(64), dep.state, { attestorSecret: secret }, undefined, undefined, Number(NOW));
+    const { context } = dep.contract.circuits.rotateAttestor(ctx, newKey);
+    dep.state = context.currentQueryContext.state;
+  };
+  const NEW = bytesOf(0xb4);
+
+  test('after rotation the new secret attests and the old one is refused', async () => {
+    const dep = await deploy();
+    rotate(dep, bytesOf(0xa7), pureCircuits.attestorKey(NEW));
+    const book = bookFor([aeroPool], [BOOK_Q], 4_000_000n * MICRO);
+    await assert.rejects(attestOn(dep, { privateState: book, venues: [aeroPool], ratio: RATIO_120 }), /caller is not the registered attestor/);
+    const out = await attestOn(dep, { privateState: { ...book, attestorSecret: NEW }, venues: [aeroPool], ratio: RATIO_120 });
+    assert.deepEqual(out.attestor, pureCircuits.attestorKey(NEW));
+  });
+
+  test('someone without the current secret cannot rotate', async () => {
+    const dep = await deploy();
+    await assert.rejects(async () => rotate(dep, bytesOf(0x01), pureCircuits.attestorKey(NEW)), /caller is not the registered attestor/);
+  });
+});
+
 describe('CHAIN: each period commits to the last, and must be able to open it', () => {
   const p0 = () => bookFor([aeroPool], [BOOK_Q], 5_500_000n * MICRO, 1);
   const p1Book = (prev) => ({ ...bookFor([aeroPool], [BOOK_Q / 2n], 2_000_000n * MICRO, 2), prev });
@@ -336,7 +370,7 @@ describe('the declared accumulator width holds at the boundary', () => {
     const widest = p * (MAX_U64 * 10_000n + MAX_U64 * 9_970n);
     assert.ok(widest > 1n << 140n, 'the intermediate must be near the 2^143 budget');
     assert.ok(widest < 1n << 160n, 'and must fit the declared Uint<160> accumulator');
-    const book = { positions: padZeros([MAX_U64]), proceeds: padZeros([p]), debt: 1n, nonce: nonceOf(1) };
+    const book = { positions: padZeros([MAX_U64]), proceeds: padZeros([p]), debt: 1n, nonce: nonceOf(1), attestorSecret: bytesOf(0xa7) };
     assert.equal((await attest({ privateState: book, venues: [v], ratio: RATIO_120 })).covered, true);
   });
   test('a reserve at 2^64 is rejected: Uint<64> excludes its upper bound', async () => {

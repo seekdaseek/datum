@@ -176,14 +176,17 @@ const main = async () => {
     log(`${stamp()} ${market}: built at Base block ${b.refBlock}: marks ${f.markedCoverage.toFixed(2)}x, realisable ${f.realisableCoverage.toFixed(2)}x, gap $${Math.round(f.gapUsd).toLocaleString('en')}`);
 
     const prior = await providers.privateStateProvider.get('book');
+    // A later period must open the previous one; never fall back to an empty
+    // opening, which would only fail the proof after a costly round trip.
     const period = BigInt(ledger((await providers.publicDataProvider.queryContractState(rec.address)).data).attestationCount);
+    if (period > 0n && !prior) die(`${market}: period ${period} needs the previous opening, which is not in the private state store`);
     const ps = {
       attestorSecret: bytes(bookSecret),
       positions: pad8(b.book.positions, () => 0n),
       proceeds: pad8(b.book.proceeds, () => 0n),
       debt: b.book.debt,
       nonce: new Uint8Array(randomBytes(32)),
-      prev: period > 0n && prior ? { positions: prior.positions, debt: prior.debt, nonce: prior.nonce } : emptyOpening(),
+      prev: period > 0n ? { positions: prior.positions, debt: prior.debt, nonce: prior.nonce } : emptyOpening(),
     };
     await providers.privateStateProvider.set('book', ps);
     const call = await book.callTx.attest(pad8([b.venue], padding), b.ratio, BigInt(Math.floor(Date.now() / 1000)));
