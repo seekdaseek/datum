@@ -11,7 +11,7 @@
 #      - swap-in (vmstat si)
 #      - restart counts of lictor, lictor-felix and partitio-relayer
 # 3. ROLLBACK, immediately, if available memory drops under 500 MB, swap-in
-#    stays active for three samples in a row, or any watched process restarts:
+#    stays above the baseline's busiest sample for three samples in a row, or any watched process restarts:
 #    stop the datum units and nothing else on the box changes.
 #
 # Run it with the service started with RATE_PER_HOUR raised for the test
@@ -38,7 +38,11 @@ rollback() {
 
 echo "== baseline $(date -u +%FT%TZ)"
 free -m
-vmstat 5 13
+vmstat 5 13 | tee /tmp/datum-vmstat.$$
+# The box swaps a little at idle, so the swap-in gate compares against the
+# busiest sample of this baseline minute, not against zero.
+SI_BASE=$(awk 'NR>3 {print $7}' /tmp/datum-vmstat.$$ | sort -n | tail -1); rm -f /tmp/datum-vmstat.$$
+echo "baseline swap-in max: ${SI_BASE} KB/s"
 BASE=$(restarts)
 echo "watched: $BASE"
 
@@ -51,8 +55,8 @@ touch "$SAMPLER_FLAG"
     a=$(avail); si=$(vmstat 1 2 | tail -1 | awk '{print $7}'); r=$(restarts)
     echo "sample $(date -u +%T) avail_MB=$a si=$si $r"
     [ "$a" -lt "$FLOOR_MB" ] && { echo "TRIP avail $a < $FLOOR_MB"; kill -USR1 $$; break; }
-    if [ "$si" -gt 0 ]; then hot=$((hot + 1)); else hot=0; fi
-    [ "$hot" -ge 3 ] && { echo "TRIP swap-in active 3 samples"; kill -USR1 $$; break; }
+    if [ "$si" -gt "$SI_BASE" ]; then hot=$((hot + 1)); else hot=0; fi
+    [ "$hot" -ge 3 ] && { echo "TRIP swap-in above baseline ($SI_BASE) for 3 samples"; kill -USR1 $$; break; }
     [ "$r" != "$BASE" ] && { echo "TRIP restart: $r vs $BASE"; kill -USR1 $$; break; }
     sleep 4
   done
