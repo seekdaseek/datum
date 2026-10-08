@@ -24,6 +24,7 @@ import {
   UINT64_CAP,
   NOW,
   MAX_REF_AGE,
+  ledger,
 } from './harness.mjs';
 
 // ---------------------------------------------------------------------------
@@ -410,5 +411,33 @@ describe('the book commitment binds positions, debt and nonce', () => {
   });
   test('an identical book with an identical nonce gives an identical commitment', async () => {
     assert.equal(await commitmentFor(), await commitmentFor());
+  });
+});
+
+// Added from the Midnight Expert review (docs/REVIEW.md, section B).
+describe('REVIEW: boundaries the plugin review asked for', () => {
+  test('TS1: an ACTIVE slot with reserveY = 0 is rejected', async () => {
+    await assert.rejects(attest({ privateState: bookFor([aeroPool], [BOOK_Q], 1n), venues: [{ ...aeroPool, reserveY: 0n }], ratio: RATIO_120 }), /reserveY must be positive/);
+  });
+  test('TS3: a fresh deployment starts at the zero head, period 0, no venues and no verdict', async () => {
+    const dep = await deploy();
+    const L = ledger(dep.state.data);
+    assert.equal(L.attestationCount, 0n);
+    assert.deepEqual(L.head, bytesOf(0));
+    assert.deepEqual(L.prevHead, bytesOf(0));
+    assert.equal(L.headPeriod, 0n);
+    assert.equal(L.covered, false);
+    assert.equal(L.requiredRatio, 0n);
+  });
+  test('TS5: proceeds exactly equal to debt × ratio are COVERED (the bar is >=, not >)', async () => {
+    const b = bookFor([aeroPool], [BOOK_Q], 1n);
+    b.debt = b.proceeds[0];                       // proceeds * 1e6 == debt * 1_000_000
+    assert.equal((await attest({ privateState: b, venues: [aeroPool], ratio: 1_000_000n })).covered, true);
+    b.debt = b.proceeds[0] + 1n;
+    assert.equal((await attest({ privateState: b, venues: [aeroPool], ratio: 1_000_000n })).covered, false);
+  });
+  test('TS7: a reference block equal to the Sync block is accepted', async () => {
+    const v = { ...aeroPool, refBlock: aeroPool.syncBlock };
+    assert.equal((await attest({ privateState: bookFor([v], [BOOK_Q], 1n), venues: [v], ratio: RATIO_120 })).covered, true);
   });
 });

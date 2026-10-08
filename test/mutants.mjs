@@ -19,7 +19,7 @@ const C = 'contract/src/datum.compact';
 
 const MUTANTS = [
   { name: 'fee ignored in the bound', file: C,
-    from: 'const g = (10000 - slot.feeBps) as Uint<16>;', to: 'const g = 10000 as Uint<16>;' },
+    from: 'const g = 10000 - slot.feeBps;', to: 'const g = 10000 as Uint<16>;' },
   { name: 'quoteRate ignored in the sum', file: C,
     from: '  const proceedsUsd =\n    p[0] * vs[0].quoteRate + p[1] * vs[1].quoteRate +\n    p[2] * vs[2].quoteRate + p[3] * vs[3].quoteRate;',
     to: '  const proceedsUsd = (p[0] + p[1] + p[2] + p[3]) * 1000000;' },

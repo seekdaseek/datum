@@ -45,7 +45,8 @@ import {
   registerDustIfNeeded, waitForDust, transferNight, walletProviderFor, closeWallet, log,
 } from './wallet-lib.mjs';
 import { buildMoonwellBook, MARKETS } from './books/moonwell.mjs';
-import { Contract, ledger } from '../build/datum-full/contract/index.js';
+import { Contract, ledger, pureCircuits } from '../build/datum-full/contract/index.js';
+import { verifyAttestation } from './verify-core.mjs';
 
 const NET = applyNetwork();
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : d; };
@@ -190,9 +191,17 @@ const main = async () => {
     };
     await providers.privateStateProvider.set('book', ps);
     const call = await book.callTx.attest(pad8([b.venue], padding), b.ratio, BigInt(Math.floor(Date.now() / 1000)));
-    const verdict = ledger((await providers.publicDataProvider.queryContractState(rec.address)).data).covered;
-    rec.attest = { ...txFields(call.public), period: period.toString(), requiredRatio: Number(b.ratio) / 1e6, covered: verdict, baseRefBlock: b.refBlock.toString(), figures: f, sources: b.sources };
-    log(`${stamp()} ${market}: ATTESTED period ${period}: ${verdict ? 'COVERED' : 'NOT COVERED'}, tx ${rec.attest.txHash} block ${rec.attest.block} ${rec.attest.status}`);
+    const L = ledger((await providers.publicDataProvider.queryContractState(rec.address)).data);
+    const verdict = L.covered;
+    // The circuit cannot see Base; the verifier can. Run it now, before this
+    // verdict is reported anywhere, and keep the venue array of this period
+    // in the public record: the ledger keeps only the latest one.
+    const check = await verifyAttestation({ L, pureCircuits });
+    const failed = check.sections.flatMap((x) => x.checks.filter((c) => !c.ok).map((c) => c.name));
+    rec.attest = { ...txFields(call.public), period: period.toString(), requiredRatio: Number(b.ratio) / 1e6, covered: verdict,
+      provenanceVerified: check.ok, ...(failed.length ? { failedChecks: failed } : {}),
+      venues: [b.venue].map((v) => Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x instanceof Uint8Array ? hex(x) : typeof x === 'bigint' ? x.toString() : x]))), baseRefBlock: b.refBlock.toString(), figures: f, sources: b.sources };
+    log(`${stamp()} ${market}: ATTESTED period ${period}: ${verdict ? 'COVERED' : 'NOT COVERED'}, tx ${rec.attest.txHash} block ${rec.attest.block} ${rec.attest.status}; verified from chain: ${check.ok ? 'yes' : `NO (${failed.join('; ')})`}`);
     writeRecord();
   }
 

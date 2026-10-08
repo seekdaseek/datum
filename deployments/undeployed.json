@@ -1,13 +1,13 @@
 {
   "network": "undeployed",
-  "generatedAt": "2026-10-08T10:02:02.034Z",
+  "generatedAt": "2026-10-08T11:08:02.742Z",
   "contractVersion": "v2",
   "demo": {
-    "address": "2adc760abff8f14595a321351a454c1bf60a510782692690614cf3a897aaad72",
+    "address": "e179f757ff104facfc2d34ffdc678505836ee6073e889710ffbb1d6e3bc5d59c",
     "deploy": {
-      "txHash": "18a4058d0b1e841634b1d9f81677f730e7411b65787f35926ddd83a89429c4d7",
-      "txIdentifier": "0078e198f524b5a45af0a5031eafff38aff52e59eb564ec36c8ebf16c3d79c878e",
-      "block": 1434,
+      "txHash": "d34cfc193f94333cd4c080732adf78e47527f5b79985dfac5890cb640b0ca593",
+      "txIdentifier": "00ae91fffd8a0afaa3ad28d540ec86011858f78e82fedc0cf443eb1285bc013bc9",
+      "block": 1961,
       "status": "SucceedEntirely"
     }
   },
@@ -487,56 +487,389 @@
           "status": "SucceedEntirely"
         }
       }
+    },
+    {
+      "network": "undeployed",
+      "generatedAt": "2026-10-08T10:54:27.629Z",
+      "contractVersion": "v2",
+      "books": {
+        "AERO": {
+          "address": "317247dd85d93bed19727afd4553f7ac7d400d2884aa01611efdea8328bef708",
+          "deploy": {
+            "txHash": "9792508ae668aab166f25343ec95bfcb1bd43cc29c01753bb536701af9789ac3",
+            "txIdentifier": "0011966760faaec3451fec691d1dc97faa7258e026f3e47ece87c707afe6074cb3",
+            "block": 1930,
+            "status": "SucceedEntirely"
+          },
+          "attest": {
+            "txHash": "6b0b65d39b3f7debff8843d510f8236c4d401e1b6fb0a55120d9adce8e4ee94b",
+            "txIdentifier": "00ed5d7aa1e940e842b73a9f1b7a60c9202324901738eaaddcbd992be0395eb4b3",
+            "block": 1942,
+            "status": "SucceedEntirely",
+            "period": "0",
+            "requiredRatio": 1,
+            "covered": true,
+            "baseRefBlock": "52333762",
+            "figures": {
+              "market": "AERO",
+              "supplied": 3414790.321357,
+              "oraclePrice": 0.77809001,
+              "collateralFactor": 0.6,
+              "quote": "USDC",
+              "quoteRateUsd": 1,
+              "markedUsd": 2657014.235292,
+              "debtUsd": 1594208.541175,
+              "realisableQuote": 2355461.206381,
+              "realisableUsd": 2355461.206381,
+              "markedCoverage": 1.6666666666668757,
+              "realisableCoverage": 1.4775113453130317,
+              "gapUsd": 301553.028911,
+              "gapPct": 11.349319281229217,
+              "poolQuoteReserve": 21595031.968876,
+              "poolCollateralReserve": 27808567.829215,
+              "quoteLeg": null
+            },
+            "sources": {
+              "chain": "Base (8453)",
+              "block": "52333762",
+              "comptroller": "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c",
+              "mToken": "0x73902f619ceb9b31fd8efecf435cbdf89e369ba6",
+              "oracle": "0xec942be8a8114bfd0396a5052c36027f2ca6a9d0",
+              "pool": "0x6cdcb1c4a4d1c3c6d054b27ac5b77e89eafb971d",
+              "raw": {
+                "mTokenTotalSupply": "14628763097416572",
+                "exchangeRateStored": "233429873641200842507054626",
+                "collateralFactorMantissa": "600000000000000000",
+                "oraclePrice": "778090010000000000"
+              },
+              "venueEvidence": {
+                "kind": "Aerodrome volatile (x*y=k)",
+                "feeBps": 30,
+                "quote": "USDC",
+                "quoteRateSource": "USD stablecoin, 1.0"
+              }
+            }
+          }
+        },
+        "WELL": {
+          "address": "d714a68b66093828cfd8fe67d4a87a8ac5d65e178bb988038aebfe7a649d182f",
+          "deploy": {
+            "txHash": "7c25ca3472e03f50ab16a54419beb0bd091bade97640f3ea016d6aa8a8b93f23",
+            "txIdentifier": "007901c863576d0bc7b19b3cdc835c245b2a009b4071c1b3d3365fa9c7159696de",
+            "block": 1946,
+            "status": "SucceedEntirely"
+          },
+          "attest": {
+            "txHash": "246fdd73b3f20b9c8f95afde172aeb53d60e90b644141a1c6899e7670fef1578",
+            "txIdentifier": "007f78a6430dab5d06c334bb1d62e18d5fb2808d45cf375f206cdfcce0299754bd",
+            "block": 1957,
+            "status": "SucceedEntirely",
+            "period": "0",
+            "requiredRatio": 1,
+            "covered": true,
+            "baseRefBlock": "52333810",
+            "figures": {
+              "market": "WELL",
+              "supplied": 131253121.155087,
+              "oraclePrice": 0.00241884,
+              "collateralFactor": 0.55,
+              "quote": "WETH",
+              "quoteRateUsd": 2551.56,
+              "markedUsd": 317480.299574,
+              "debtUsd": 174614.164765,
+              "realisableQuote": 82.853523,
+              "realisableUsd": 211405.735145,
+              "markedCoverage": 1.818181818189107,
+              "realisableCoverage": 1.210702095271108,
+              "gapUsd": 106074.564429,
+              "gapPct": 33.41138476035599,
+              "poolQuoteReserve": 256.204529,
+              "poolCollateralReserve": 271869332.251034,
+              "quoteLeg": {
+                "pool": "0xcdac0d6c6c59727a65f871236188350531885c43",
+                "label": "Aerodrome volatile (x*y=k)",
+                "feeBps": 30,
+                "wethReserve": 1677.614615,
+                "usdcReserve": 4286452.136891,
+                "wethSold": 82.853523,
+                "atMarkUsd": 211405.735145,
+                "throughPoolUsd": 201157.981805,
+                "extraImpactPct": 4.847433932183165
+              }
+            },
+            "sources": {
+              "chain": "Base (8453)",
+              "block": "52333810",
+              "comptroller": "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c",
+              "mToken": "0xdc7810b47eaab250de623f0ee07764afa5f71ed1",
+              "oracle": "0xec942be8a8114bfd0396a5052c36027f2ca6a9d0",
+              "pool": "0x89d0f320ac73dd7d9513ffc5bc58d1161452a657",
+              "raw": {
+                "mTokenTotalSupply": "648106475705003462",
+                "exchangeRateStored": "202517836305079064098679053",
+                "collateralFactorMantissa": "550000000000000000",
+                "oraclePrice": "2418840000000000"
+              },
+              "venueEvidence": {
+                "kind": "Aerodrome volatile (x*y=k)",
+                "feeBps": 100,
+                "quote": "WETH",
+                "quoteRateSource": "Moonwell oracle, mWETH at the reference block"
+              }
+            }
+          }
+        }
+      },
+      "demo": {
+        "address": "e179f757ff104facfc2d34ffdc678505836ee6073e889710ffbb1d6e3bc5d59c",
+        "deploy": {
+          "txHash": "d34cfc193f94333cd4c080732adf78e47527f5b79985dfac5890cb640b0ca593",
+          "txIdentifier": "00ae91fffd8a0afaa3ad28d540ec86011858f78e82fedc0cf443eb1285bc013bc9",
+          "block": 1961,
+          "status": "SucceedEntirely"
+        }
+      }
+    },
+    {
+      "network": "undeployed",
+      "generatedAt": "2026-10-08T11:08:02.742Z",
+      "contractVersion": "v2",
+      "books": {
+        "AERO": {
+          "address": "6aa654a25f70d981b37cc40c4ccc586464eeace7f6a578fc63f8ad9d5920f435",
+          "deploy": {
+            "txHash": "0b1205c1d6a936dbe0de6f8afdc96c4ab7d7345f8b1dc6d75cf53acc205a5350",
+            "txIdentifier": "004445e61b3579341d5a5a630925956e3155b0a38406078b62cf5cb3214b909cd7",
+            "block": 2066,
+            "status": "SucceedEntirely"
+          },
+          "attest": {
+            "txHash": "66d9626293f3da92ad43345525dcc6c68b20d807b5076ab249ae9d11b8a8b84b",
+            "txIdentifier": "0065d8054f9617a73a6e14f49550ecb80ebdcde756587edca0c2ee3b24e1768c3e",
+            "block": 2077,
+            "status": "SucceedEntirely",
+            "period": "0",
+            "requiredRatio": 1,
+            "covered": true,
+            "provenanceVerified": true,
+            "venues": [
+              {
+                "chainId": "8453",
+                "pool": "6cdcb1c4a4d1c3c6d054b27ac5b77e89eafb971d",
+                "collateralIsToken0": false,
+                "decX": "18",
+                "decY": "6",
+                "feeBps": "30",
+                "syncBlock": "52334157",
+                "syncTx": "a0e35c9bcb2a7e3ccea5004876b0bf9190ff68016f8b46007ad2765fa08784b7",
+                "logIndex": "260",
+                "refBlock": "52334170",
+                "refTime": "1791457687",
+                "reserveX": "27870400914516",
+                "reserveY": "21547122380655",
+                "quoteRate": "1000000"
+              }
+            ],
+            "baseRefBlock": "52334170",
+            "figures": {
+              "market": "AERO",
+              "supplied": 3414790.321357,
+              "oraclePrice": 0.77353122,
+              "collateralFactor": 0.6,
+              "quote": "USDC",
+              "quoteRateUsd": 1,
+              "markedUsd": 2641446.923323,
+              "debtUsd": 1584868.153993,
+              "realisableQuote": 2345588.900935,
+              "realisableUsd": 2345588.900935,
+              "markedCoverage": 1.6666666666675078,
+              "realisableCoverage": 1.4799899253609206,
+              "gapUsd": 295858.022388,
+              "gapPct": 11.200604478389591,
+              "poolQuoteReserve": 21547122.380655,
+              "poolCollateralReserve": 27870400.914516,
+              "quoteLeg": null
+            },
+            "sources": {
+              "chain": "Base (8453)",
+              "block": "52334170",
+              "comptroller": "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c",
+              "mToken": "0x73902f619ceb9b31fd8efecf435cbdf89e369ba6",
+              "oracle": "0xec942be8a8114bfd0396a5052c36027f2ca6a9d0",
+              "pool": "0x6cdcb1c4a4d1c3c6d054b27ac5b77e89eafb971d",
+              "raw": {
+                "mTokenTotalSupply": "14628763097416572",
+                "exchangeRateStored": "233429873641200842507054626",
+                "collateralFactorMantissa": "600000000000000000",
+                "oraclePrice": "773531220000000000"
+              },
+              "venueEvidence": {
+                "kind": "Aerodrome volatile (x*y=k)",
+                "feeBps": 30,
+                "quote": "USDC",
+                "quoteRateSource": "USD stablecoin, 1.0"
+              }
+            }
+          }
+        },
+        "WELL": {
+          "address": "d6029b979c62e417ad9d26e48d2879a40613fa492d08b4a31d2c3e370d50fa32",
+          "deploy": {
+            "txHash": "8468baaad2b34552cf7cd0de37c2ad98dfa83c01ff3ac64d84a4dd50a837c505",
+            "txIdentifier": "00abbf6c3758672650545ec17c2fba0ae7529750537060d6df160e8c3ca38bb60a",
+            "block": 2082,
+            "status": "SucceedEntirely"
+          },
+          "attest": {
+            "txHash": "fdea25f625c26e12274d4a642ba385ca648721d74598864ce274ff3836acc70f",
+            "txIdentifier": "00c0cb3addccf7429e2cc71832be38d7ac45b8994cccb2d8616f7485f0d2c4d916",
+            "block": 2094,
+            "status": "SucceedEntirely",
+            "period": "0",
+            "requiredRatio": 1,
+            "covered": true,
+            "provenanceVerified": true,
+            "venues": [
+              {
+                "chainId": "8453",
+                "pool": "89d0f320ac73dd7d9513ffc5bc58d1161452a657",
+                "collateralIsToken0": false,
+                "decX": "18",
+                "decY": "18",
+                "feeBps": "100",
+                "syncBlock": "52333896",
+                "syncTx": "a779ae26a8787b1b5ad68c21e365ed699f18c769d473af59ebf9369b2804e3fa",
+                "logIndex": "513",
+                "refBlock": "52334218",
+                "refTime": "1791457783",
+                "reserveX": "271869335515893",
+                "reserveY": "256204526",
+                "quoteRate": "2539771682"
+              }
+            ],
+            "baseRefBlock": "52334218",
+            "figures": {
+              "market": "WELL",
+              "supplied": 131253121.155087,
+              "oraclePrice": 0.00240477,
+              "collateralFactor": 0.55,
+              "quote": "WETH",
+              "quoteRateUsd": 2539.771682,
+              "markedUsd": 315633.56816,
+              "debtUsd": 173598.462488,
+              "realisableQuote": 82.853521,
+              "realisableUsd": 210429.026389,
+              "markedCoverage": 1.8181818181818181,
+              "realisableCoverage": 1.2121595051773337,
+              "gapUsd": 105204.541771,
+              "gapPct": 33.33122721524665,
+              "poolQuoteReserve": 256.204526,
+              "poolCollateralReserve": 271869335.515893,
+              "quoteLeg": {
+                "pool": "0xcdac0d6c6c59727a65f871236188350531885c43",
+                "label": "Aerodrome volatile (x*y=k)",
+                "feeBps": 30,
+                "wethReserve": 1681.055085,
+                "usdcReserve": 4277679.487939,
+                "wethSold": 82.853521,
+                "atMarkUsd": 210429.026389,
+                "throughPoolUsd": 200354.680471,
+                "extraImpactPct": 4.787526745182255
+              }
+            },
+            "sources": {
+              "chain": "Base (8453)",
+              "block": "52334218",
+              "comptroller": "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c",
+              "mToken": "0xdc7810b47eaab250de623f0ee07764afa5f71ed1",
+              "oracle": "0xec942be8a8114bfd0396a5052c36027f2ca6a9d0",
+              "pool": "0x89d0f320ac73dd7d9513ffc5bc58d1161452a657",
+              "raw": {
+                "mTokenTotalSupply": "648106475705003462",
+                "exchangeRateStored": "202517836305079064098679053",
+                "collateralFactorMantissa": "550000000000000000",
+                "oraclePrice": "2404770000000000"
+              },
+              "venueEvidence": {
+                "kind": "Aerodrome volatile (x*y=k)",
+                "feeBps": 100,
+                "quote": "WETH",
+                "quoteRateSource": "Moonwell oracle, mWETH at the reference block"
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "books": {
     "AERO": {
-      "address": "039fc872ba6fc2ee4a8129e22c2c118bb95ba372f97a47b93c120a0b5ac3fca9",
+      "address": "6aa654a25f70d981b37cc40c4ccc586464eeace7f6a578fc63f8ad9d5920f435",
       "deploy": {
-        "txHash": "3cfa7a9680615c940f3ca6a931aa15b3783334788436f4959612d99faf580fa3",
-        "txIdentifier": "00e56d06392e1e3750b62cdbb6729c3940cbf40bbc097bcbe370843ef3bc85f4dd",
-        "block": 1407,
+        "txHash": "0b1205c1d6a936dbe0de6f8afdc96c4ab7d7345f8b1dc6d75cf53acc205a5350",
+        "txIdentifier": "004445e61b3579341d5a5a630925956e3155b0a38406078b62cf5cb3214b909cd7",
+        "block": 2066,
         "status": "SucceedEntirely"
       },
       "attest": {
-        "txHash": "fe3f5cfecb58651fd52c0037a0f714550b67b7405c6f7d2af5baadc74bb59b5d",
-        "txIdentifier": "00799b57b370318aec2aab6aa5b4635bcc52c32461a42de0f639d75efa5fe4c14f",
-        "block": 1417,
+        "txHash": "66d9626293f3da92ad43345525dcc6c68b20d807b5076ab249ae9d11b8a8b84b",
+        "txIdentifier": "0065d8054f9617a73a6e14f49550ecb80ebdcde756587edca0c2ee3b24e1768c3e",
+        "block": 2077,
         "status": "SucceedEntirely",
         "period": "0",
+        "requiredRatio": 1,
         "covered": true,
-        "baseRefBlock": "52332190",
+        "provenanceVerified": true,
+        "venues": [
+          {
+            "chainId": "8453",
+            "pool": "6cdcb1c4a4d1c3c6d054b27ac5b77e89eafb971d",
+            "collateralIsToken0": false,
+            "decX": "18",
+            "decY": "6",
+            "feeBps": "30",
+            "syncBlock": "52334157",
+            "syncTx": "a0e35c9bcb2a7e3ccea5004876b0bf9190ff68016f8b46007ad2765fa08784b7",
+            "logIndex": "260",
+            "refBlock": "52334170",
+            "refTime": "1791457687",
+            "reserveX": "27870400914516",
+            "reserveY": "21547122380655",
+            "quoteRate": "1000000"
+          }
+        ],
+        "baseRefBlock": "52334170",
         "figures": {
           "market": "AERO",
-          "supplied": 3414764.643853,
-          "oraclePrice": 0.78192477,
+          "supplied": 3414790.321357,
+          "oraclePrice": 0.77353122,
           "collateralFactor": 0.6,
           "quote": "USDC",
           "quoteRateUsd": 1,
-          "markedUsd": 2670089.058749,
-          "debtUsd": 1602053.435249,
-          "realisableQuote": 2366909.749522,
-          "realisableUsd": 2366909.749522,
-          "markedCoverage": 1.6666666666670829,
-          "realisableCoverage": 1.477422473835351,
-          "gapUsd": 303179.309227,
-          "gapPct": 11.354651569901069,
-          "poolQuoteReserve": 21650411.830316,
-          "poolCollateralReserve": 27737042.050321,
+          "markedUsd": 2641446.923323,
+          "debtUsd": 1584868.153993,
+          "realisableQuote": 2345588.900935,
+          "realisableUsd": 2345588.900935,
+          "markedCoverage": 1.6666666666675078,
+          "realisableCoverage": 1.4799899253609206,
+          "gapUsd": 295858.022388,
+          "gapPct": 11.200604478389591,
+          "poolQuoteReserve": 21547122.380655,
+          "poolCollateralReserve": 27870400.914516,
           "quoteLeg": null
         },
         "sources": {
           "chain": "Base (8453)",
-          "block": "52332190",
+          "block": "52334170",
           "comptroller": "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c",
           "mToken": "0x73902f619ceb9b31fd8efecf435cbdf89e369ba6",
           "oracle": "0xec942be8a8114bfd0396a5052c36027f2ca6a9d0",
           "pool": "0x6cdcb1c4a4d1c3c6d054b27ac5b77e89eafb971d",
           "raw": {
-            "mTokenTotalSupply": "14628764238046753",
-            "exchangeRateStored": "233428100165337222046384721",
+            "mTokenTotalSupply": "14628763097416572",
+            "exchangeRateStored": "233429873641200842507054626",
             "collateralFactorMantissa": "600000000000000000",
-            "oraclePrice": "781924770000000000"
+            "oraclePrice": "773531220000000000"
           },
           "venueEvidence": {
             "kind": "Aerodrome volatile (x*y=k)",
@@ -548,53 +881,73 @@
       }
     },
     "WELL": {
-      "address": "49e41f78fdf174932267ef851866f174588718a4072fd520ca4155b60bfc22f1",
+      "address": "d6029b979c62e417ad9d26e48d2879a40613fa492d08b4a31d2c3e370d50fa32",
       "deploy": {
-        "txHash": "a9713f839e189687fcff86440210c691d631157f04d96e93889ce98f1804ddbe",
-        "txIdentifier": "00e810ba026c4b636d5a5e6605dac9d8ea1da948c1dafa3db40283a05438ca3194",
-        "block": 1420,
+        "txHash": "8468baaad2b34552cf7cd0de37c2ad98dfa83c01ff3ac64d84a4dd50a837c505",
+        "txIdentifier": "00abbf6c3758672650545ec17c2fba0ae7529750537060d6df160e8c3ca38bb60a",
+        "block": 2082,
         "status": "SucceedEntirely"
       },
       "attest": {
-        "txHash": "5e47e4fb2981b974913b1ab2e807f1d0ef573260c1ca204e51ec8bf2356f9a82",
-        "txIdentifier": "004f307c700c379ce9784287231aff2bfdde3ad143ed01c0003493277b1ebfca0e",
-        "block": 1430,
+        "txHash": "fdea25f625c26e12274d4a642ba385ca648721d74598864ce274ff3836acc70f",
+        "txIdentifier": "00c0cb3addccf7429e2cc71832be38d7ac45b8994cccb2d8616f7485f0d2c4d916",
+        "block": 2094,
         "status": "SucceedEntirely",
         "period": "0",
+        "requiredRatio": 1,
         "covered": true,
-        "baseRefBlock": "52332229",
+        "provenanceVerified": true,
+        "venues": [
+          {
+            "chainId": "8453",
+            "pool": "89d0f320ac73dd7d9513ffc5bc58d1161452a657",
+            "collateralIsToken0": false,
+            "decX": "18",
+            "decY": "18",
+            "feeBps": "100",
+            "syncBlock": "52333896",
+            "syncTx": "a779ae26a8787b1b5ad68c21e365ed699f18c769d473af59ebf9369b2804e3fa",
+            "logIndex": "513",
+            "refBlock": "52334218",
+            "refTime": "1791457783",
+            "reserveX": "271869335515893",
+            "reserveY": "256204526",
+            "quoteRate": "2539771682"
+          }
+        ],
+        "baseRefBlock": "52334218",
         "figures": {
           "market": "WELL",
           "supplied": 131253121.155087,
-          "oraclePrice": 0.0024004,
+          "oraclePrice": 0.00240477,
           "collateralFactor": 0.55,
           "quote": "WETH",
-          "quoteRateUsd": 2566.89,
-          "markedUsd": 315059.99202,
-          "debtUsd": 173282.995611,
-          "realisableQuote": 82.832848,
-          "realisableUsd": 212622.809202,
+          "quoteRateUsd": 2539.771682,
+          "markedUsd": 315633.56816,
+          "debtUsd": 173598.462488,
+          "realisableQuote": 82.853521,
+          "realisableUsd": 210429.026389,
           "markedCoverage": 1.8181818181818181,
-          "realisableCoverage": 1.2270263937456003,
-          "gapUsd": 102437.182818,
-          "gapPct": 32.513548343991985,
-          "poolQuoteReserve": 256.166396,
-          "poolCollateralReserve": 271909803.346011,
+          "realisableCoverage": 1.2121595051773337,
+          "gapUsd": 105204.541771,
+          "gapPct": 33.33122721524665,
+          "poolQuoteReserve": 256.204526,
+          "poolCollateralReserve": 271869335.515893,
           "quoteLeg": {
             "pool": "0xcdac0d6c6c59727a65f871236188350531885c43",
             "label": "Aerodrome volatile (x*y=k)",
             "feeBps": 30,
-            "wethReserve": 1675.854783,
-            "usdcReserve": 4290927.590175,
-            "wethSold": 82.832848,
-            "atMarkUsd": 212622.809202,
-            "throughPoolUsd": 201521.597794,
-            "extraImpactPct": 5.221082088823977
+            "wethReserve": 1681.055085,
+            "usdcReserve": 4277679.487939,
+            "wethSold": 82.853521,
+            "atMarkUsd": 210429.026389,
+            "throughPoolUsd": 200354.680471,
+            "extraImpactPct": 4.787526745182255
           }
         },
         "sources": {
           "chain": "Base (8453)",
-          "block": "52332229",
+          "block": "52334218",
           "comptroller": "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c",
           "mToken": "0xdc7810b47eaab250de623f0ee07764afa5f71ed1",
           "oracle": "0xec942be8a8114bfd0396a5052c36027f2ca6a9d0",
@@ -603,7 +956,7 @@
             "mTokenTotalSupply": "648106475705003462",
             "exchangeRateStored": "202517836305079064098679053",
             "collateralFactorMantissa": "550000000000000000",
-            "oraclePrice": "2400400000000000"
+            "oraclePrice": "2404770000000000"
           },
           "venueEvidence": {
             "kind": "Aerodrome volatile (x*y=k)",

@@ -1,4 +1,4 @@
-pragma language_version 0.23;
+pragma language_version >= 0.23;
 
 import CompactStandardLibrary;
 
@@ -33,9 +33,9 @@ import CompactStandardLibrary;
 // OVERFLOW
 //   q_i * price_i                   < 2^128
 //   sum over 4                      < 2^130
-//   * RATIO_SCALE (< 2^20)          < 2^151
+//   * RATIO_SCALE (< 2^20)          < 2^150
 //   debt * ratio * 1e6              < 2^148
-// Uint<168> accumulators leave 17 bits of headroom.
+// Uint<168> accumulators leave 18 bits of headroom.
 // ===========================================================================
 
 export ledger covered: Boolean;
@@ -50,7 +50,8 @@ export circuit markCheck(prices: Vector<4, Uint<64>>, ratio: Uint<64>): [] {
 
   assert(ratio > 0, "control: requiredRatio must be positive");
 
-  const ps = disclose(prices);
+  // prices is a public circuit argument: no disclosure is needed to use it.
+  const ps = prices;
   for (const i of 0..4) {
     // A held position must have a price; an unpriced position cannot be
     // counted at zero and silently dropped.

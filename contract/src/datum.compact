@@ -1,4 +1,4 @@
-pragma language_version 0.23;
+pragma language_version >= 0.23;
 
 import CompactStandardLibrary;
 
@@ -90,11 +90,12 @@ import CompactStandardLibrary;
 //       state picked on purpose;
 //   (c) refTime is the timestamp of refBlock;
 //   (d) the pool is a factory-vouched constant-product pool, collateralIsToken0
-//       names the side being sold, decX/decY are the tokens' decimals and
+//       is consistent with the pool's token order and the reserves cited, decX/decY are the tokens' decimals and
 //       feeBps is the pool's fee at refBlock;
 //   (e) quoteRate is 1.0 for a USD stablecoin, or the named oracle's price for
 //       a priced quote (WETH: Moonwell) at refBlock.
-// The circuit enforces the parts that need no other chain: refTime is in the
+// The circuit enforces the parts that need no other chain: refBlock is at or
+// after syncBlock; refTime is in the
 // past and within maxRefAge of Midnight block time at inclusion; pools are
 // distinct; fees are in range; padding contributes nothing.
 // ===========================================================================
@@ -213,7 +214,9 @@ witness attestorSecret(): Bytes<32>;            // the attestor's key
 witness previousOpening(): PrevOpening;         // last period's opening
 
 // ---------------------------------------------------------------------------
-// PURE HELPERS — exported so a verifier recomputes them with public data only
+// PURE HELPERS — venueDigest takes public data only, so any verifier
+// recomputes it; attestorKey takes the attestor's secret and is exported so
+// the attestor can compute a new key off-chain for rotateAttestor
 // ---------------------------------------------------------------------------
 
 export pure circuit venueDigest(venueState: Vector<4, VenueSlot>): Bytes<32> {
@@ -301,7 +304,7 @@ circuit checkSlot(slot: VenueSlot, q: Uint<64>, p: Uint<64>, age: Uint<32>): [] 
   //   Y * q * g / (X * FEE_SCALE + q * g),   g = FEE_SCALE - f.
   // The prover supplies p as a claimed lower bound; the circuit checks the
   // cross-multiplied form. Overclaiming fails here.
-  const g = (10000 - slot.feeBps) as Uint<16>;
+  const g = 10000 - slot.feeBps; // feeBps < 10000, asserted above
   const lhs: Uint<160> = p * (slot.reserveX * 10000 + q * g);
   const rhs: Uint<160> = slot.reserveY * q * g;
   assert(lhs <= rhs, "datum: claimed proceeds exceed realisable proceeds for this slot");
@@ -336,7 +339,7 @@ export circuit attest(
   // attestedAt must be within 10 minutes of the block time at inclusion.
   const ts = disclose(timestamp);
   assert(ts > 600, "datum: timestamp out of range");
-  assert(blockTimeGt((ts - 600) as Uint<64>), "datum: attestedAt is too far in the future");
+  assert(blockTimeGt(ts - 600), "datum: attestedAt is too far in the future");
   assert(blockTimeLt((ts + 600) as Uint<64>), "datum: attestedAt is too far in the past");
 
   const age = maxRefAge;
