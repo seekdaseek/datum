@@ -1,0 +1,71 @@
+pragma language_version 0.23;
+
+import CompactStandardLibrary;
+
+// ===========================================================================
+// control — a fair mark-based solvency check, for comparison with datum
+// ===========================================================================
+//
+// This is what a balance-threshold solvency proof does: it proves that the
+// private holdings, valued at a PUBLIC oracle price, cover the private debt at
+// a required ratio. It is implemented here in Compact, over the same private
+// book datum attests, so that the only difference between the two verdicts is
+// the valuation:
+//
+//   control:  sum(q_i * price_i)            >= debt * requiredRatio
+//   datum:    sum(realisable proceeds of q_i) >= debt * requiredRatio
+//
+// It is deliberately a faithful version of the mark-based check, not a weak
+// one: same scale conventions, same witnesses, same disclosure discipline,
+// hard asserts on its inputs. It is not deployed; it exists so a test can run
+// both checks on one book and show where they disagree.
+//
+// SCALE
+//   q_i      collateral micro-units (1e-6 token)
+//   price_i  USD micro-units per WHOLE token (an oracle mark, e.g. 0.779063
+//            USD is 779063)
+//   debt     USD micro-units
+//   ratio    scaled by RATIO_SCALE = 1e6
+// So   sum(q_i * price_i) / 1e6  is the marked value in USD micro-units, and
+// the check, cross-multiplied, is
+//   sum(q_i * price_i) * RATIO_SCALE >= debt * ratio * 1e6.
+//
+// OVERFLOW
+//   q_i * price_i                   < 2^128
+//   sum over 8                      < 2^131
+//   * RATIO_SCALE (< 2^20)          < 2^151
+//   debt * ratio * 1e6              < 2^148
+// Uint<168> accumulators leave 17 bits of headroom.
+// ===========================================================================
+
+export ledger covered: Boolean;
+export ledger requiredRatio: Uint<64>;
+
+witness positionSizes(): Vector<8, Uint<64>>;
+witness debtAmount(): Uint<64>;
+
+export circuit markCheck(prices: Vector<8, Uint<64>>, ratio: Uint<64>): [] {
+  const q = positionSizes();
+  const debt = debtAmount();
+
+  assert(ratio > 0, "control: requiredRatio must be positive");
+
+  const ps = disclose(prices);
+  for (const i of 0..8) {
+    // A held position must have a price; an unpriced position cannot be
+    // counted at zero and silently dropped.
+    assert(ps[i] > 0 || q[i] == 0, "control: a held position has no oracle price");
+  }
+
+  const marked =
+    q[0] * ps[0] + q[1] * ps[1] + q[2] * ps[2] + q[3] * ps[3] +
+    q[4] * ps[4] + q[5] * ps[5] + q[6] * ps[6] + q[7] * ps[7];
+
+  const lhs: Uint<168> = marked * 1000000;
+  const rhs: Uint<168> = debt * ratio * 1000000;
+
+  // DISCLOSE: the verdict, one bit — the same single deliberate leak as datum.
+  covered = disclose(lhs >= rhs);
+  // DISCLOSE: the public bar.
+  requiredRatio = disclose(ratio);
+}

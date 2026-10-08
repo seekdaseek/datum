@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "description": "Zero-knowledge solvency attestation at realisable exit prices, for Midnight",
   "scripts": {
-    "build": "compact compile --skip-zk contract/src/datum.compact build/datum",
+    "build": "compact compile --skip-zk contract/src/datum.compact build/datum && compact compile --skip-zk contract/src/control.compact build/control",
     "test": "node --test test/*.test.mjs",
     "dev": "vite",
     "build:web": "vite build",
