@@ -2,8 +2,9 @@
 //
 // scripts/deploy.mjs — datum v2: one process, every write.
 //
-//   node scripts/deploy.mjs --network preprod [--sync-only] [--book moonwell-aero]
-//                           [--book-address <hex>] [--skip-demo] [--sponsor-night <n>]
+//   node scripts/deploy.mjs --network preprod [--sync-only] [--books AERO,WELL]
+//                           [--reuse] [--skip-demo] [--sponsor-address <bech32>]
+//                           [--sponsor-night <n>]
 //
 // Wallet sync is the dominant cost of every write on a public network (about
 // two hours on Preprod), so everything that needs a synced wallet happens in
@@ -12,8 +13,9 @@
 //   1. open the wallet, restoring from a checkpoint if one exists; sync;
 //      checkpoint immediately
 //   2. make sure NIGHT is registered for DUST and DUST is spendable
-//   3. deploy the BOOK contract (unless --book-address is given)
-//   4. build the book against a reference block taken NOW, after the sync,
+//   3. deploy one BOOK contract per real book (Moonwell AERO, Moonwell WELL),
+//      or attach to the recorded one with --reuse
+//   4. build each book against a reference block taken NOW, after the sync,
 //      so the reserves are fresh when the proof lands — then attest it
 //   5. deploy the DEMO contract that the hosted "Attest a book" flow writes to
 //   6. send NIGHT to the sponsor wallet that will pay DUST for that flow
@@ -42,7 +44,7 @@ import {
   openWallet, saveCheckpoint, waitSynced, nightBalance, dustBalance,
   registerDustIfNeeded, waitForDust, transferNight, walletProviderFor, closeWallet, log,
 } from './wallet-lib.mjs';
-import { buildMoonwellAeroBook } from './books/moonwell-aero.mjs';
+import { buildMoonwellBook, MARKETS } from './books/moonwell.mjs';
 import { Contract, ledger } from '../build/datum-full/contract/index.js';
 
 const NET = applyNetwork();
@@ -79,7 +81,7 @@ const compiled = CompiledContract.make('datum', Contract).pipe(
 
 const padding = () => ({
   chainId: 0n, pool: new Uint8Array(20), collateralIsToken0: false, decX: 0n, decY: 0n, feeBps: 0n,
-  syncBlock: 0n, syncTx: new Uint8Array(32), logIndex: 0n, refBlock: 0n, refTime: 0n, reserveX: 1n, reserveY: 1n,
+  syncBlock: 0n, syncTx: new Uint8Array(32), logIndex: 0n, refBlock: 0n, refTime: 0n, reserveX: 1n, reserveY: 1n, quoteRate: 0n,
 });
 const pad8 = (xs, fill) => [...xs, ...Array(SLOTS - xs.length).fill(null).map(fill)];
 
@@ -131,48 +133,65 @@ const main = async () => {
 
   const record = { network: NET.id, generatedAt: new Date().toISOString(), contractVersion: 'v2' };
 
-  // 3. book contract
-  const bookProviders = providersFor(ctx, 'datum-book');
-  let book;
-  const existing = arg('--book-address');
-  if (existing) {
-    book = await findDeployedContract(bookProviders, { compiledContract: compiled, contractAddress: existing, privateStateId: 'book' });
-    log(`${stamp()} attached to book contract ${existing}`);
-    record.book = { address: existing };
-  } else {
-    log(`${stamp()} deploying the book contract…`);
-    book = await deployContract(bookProviders, {
-      compiledContract: compiled,
-      privateStateId: 'book',
-      initialPrivateState: { attestorSecret: bytes(bookSecret), ...emptyOpening(), proceeds: Array(SLOTS).fill(0n) },
-      args: [MAX_REF_AGE],
-    });
-    record.book = { address: book.deployTxData.public.contractAddress, deploy: txFields(book.deployTxData.public) };
-    log(`${stamp()} book contract ${record.book.address} — deploy tx ${record.book.deploy.txHash} block ${record.book.deploy.block}`);
-  }
-
-  // 4. the real book, built against a reference block taken now
-  const bookName = arg('--book', 'moonwell-aero');
-  if (bookName !== 'moonwell-aero') die(`unknown book ${bookName}`);
-  const b = await buildMoonwellAeroBook();
-  const f = b.figures;
-  log(`${stamp()} book built at Base block ${b.refBlock}: marks ${f.markedCoverage.toFixed(2)}x, realisable ${f.realisableCoverage.toFixed(2)}x, gap $${Math.round(f.gapUsd).toLocaleString('en')}`);
-
-  const prior = await bookProviders.privateStateProvider.get('book');
-  const period = BigInt(ledger((await bookProviders.publicDataProvider.queryContractState(record.book.address)).data).attestationCount);
-  const ps = {
-    attestorSecret: bytes(bookSecret),
-    positions: pad8(b.book.positions, () => 0n),
-    proceeds: pad8(b.book.proceeds, () => 0n),
-    debt: b.book.debt,
-    nonce: new Uint8Array(randomBytes(32)),
-    prev: period > 0n && prior ? { positions: prior.positions, debt: prior.debt, nonce: prior.nonce } : emptyOpening(),
+  const out = resolve(ROOT, `deployments/${NET.id}.json`);
+  const previous = existsSync(out) ? JSON.parse(readFileSync(out, 'utf8')) : {};
+  record.books = {};
+  // Written after every step, so a failure part-way leaves an accurate record.
+  const writeRecord = () => {
+    mkdirSync(resolve(ROOT, 'deployments'), { recursive: true });
+    const merged = { ...previous, ...record, books: { ...(previous.books ?? {}), ...record.books } };
+    delete merged.book; // the single-book layout before WELL was added
+    writeFileSync(out, JSON.stringify({ ...merged, history: [...(previous.history ?? []), record] }, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2) + '\n');
   };
-  await bookProviders.privateStateProvider.set('book', ps);
-  const venues = pad8([b.venue], padding);
-  const call = await book.callTx.attest(venues, b.ratio, BigInt(Math.floor(Date.now() / 1000)));
-  record.book.attest = { ...txFields(call.public), period: period.toString(), baseRefBlock: b.refBlock.toString(), figures: f, sources: b.sources };
-  log(`${stamp()} ATTESTED period ${period}: tx ${record.book.attest.txHash} block ${record.book.attest.block} ${record.book.attest.status}`);
+
+  // 3-4. one book contract per real book, each attested against a reference
+  // block taken just before its proof. --reuse attaches to a book contract
+  // already in the record instead of deploying a new one.
+  for (const market of arg('--books', 'AERO,WELL').split(',').map((x) => x.trim().toUpperCase())) {
+    if (!MARKETS[market]) die(`unknown book ${market}`);
+    const providers = providersFor(ctx, `datum-book-${market.toLowerCase()}`);
+    const rec = (record.books[market] = {});
+    let book;
+    const known = previous.books?.[market]?.address;
+    if (flag('--reuse') && known) {
+      book = await findDeployedContract(providers, { compiledContract: compiled, contractAddress: known, privateStateId: 'book' });
+      rec.address = known;
+      log(`${stamp()} ${market}: attached to book contract ${known}`);
+    } else {
+      log(`${stamp()} ${market}: deploying the book contract…`);
+      book = await deployContract(providers, {
+        compiledContract: compiled,
+        privateStateId: 'book',
+        initialPrivateState: { attestorSecret: bytes(bookSecret), ...emptyOpening(), proceeds: Array(SLOTS).fill(0n) },
+        args: [MAX_REF_AGE],
+      });
+      rec.address = book.deployTxData.public.contractAddress;
+      rec.deploy = txFields(book.deployTxData.public);
+      log(`${stamp()} ${market}: book contract ${rec.address}, deploy tx ${rec.deploy.txHash} block ${rec.deploy.block}`);
+    }
+    writeRecord();
+
+    const b = await buildMoonwellBook(market);
+    const f = b.figures;
+    log(`${stamp()} ${market}: built at Base block ${b.refBlock}: marks ${f.markedCoverage.toFixed(2)}x, realisable ${f.realisableCoverage.toFixed(2)}x, gap $${Math.round(f.gapUsd).toLocaleString('en')}`);
+
+    const prior = await providers.privateStateProvider.get('book');
+    const period = BigInt(ledger((await providers.publicDataProvider.queryContractState(rec.address)).data).attestationCount);
+    const ps = {
+      attestorSecret: bytes(bookSecret),
+      positions: pad8(b.book.positions, () => 0n),
+      proceeds: pad8(b.book.proceeds, () => 0n),
+      debt: b.book.debt,
+      nonce: new Uint8Array(randomBytes(32)),
+      prev: period > 0n && prior ? { positions: prior.positions, debt: prior.debt, nonce: prior.nonce } : emptyOpening(),
+    };
+    await providers.privateStateProvider.set('book', ps);
+    const call = await book.callTx.attest(pad8([b.venue], padding), b.ratio, BigInt(Math.floor(Date.now() / 1000)));
+    const verdict = ledger((await providers.publicDataProvider.queryContractState(rec.address)).data).covered;
+    rec.attest = { ...txFields(call.public), period: period.toString(), covered: verdict, baseRefBlock: b.refBlock.toString(), figures: f, sources: b.sources };
+    log(`${stamp()} ${market}: ATTESTED period ${period}: ${verdict ? 'COVERED' : 'NOT COVERED'}, tx ${rec.attest.txHash} block ${rec.attest.block} ${rec.attest.status}`);
+    writeRecord();
+  }
 
   // 5. demo contract for the hosted flow
   if (!flag('--skip-demo')) {
@@ -186,6 +205,7 @@ const main = async () => {
     });
     record.demo = { address: demo.deployTxData.public.contractAddress, deploy: txFields(demo.deployTxData.public) };
     log(`${stamp()} demo contract ${record.demo.address} — deploy tx ${record.demo.deploy.txHash}`);
+    writeRecord();
   }
 
   // 6. fund the sponsor wallet
@@ -199,10 +219,7 @@ const main = async () => {
 
   // 7. checkpoint + public record
   await saveCheckpoint(ctx, NET, STATE);
-  mkdirSync(resolve(ROOT, 'deployments'), { recursive: true });
-  const out = resolve(ROOT, `deployments/${NET.id}.json`);
-  const previous = existsSync(out) ? JSON.parse(readFileSync(out, 'utf8')) : {};
-  writeFileSync(out, JSON.stringify({ ...previous, ...record, history: [...(previous.history ?? []), record] }, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2) + '\n');
+  writeRecord();
   log(`${stamp()} wrote deployments/${NET.id}.json`);
   await closeWallet(ctx);
   process.exit(0);

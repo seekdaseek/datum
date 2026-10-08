@@ -39,7 +39,7 @@ import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-j
 
 import { NETWORKS } from '../scripts/networks.mjs';
 import { buildVenueSlot } from '../scripts/provenance.mjs';
-import { buildMoonwellAeroBook, MOONWELL } from '../scripts/books/moonwell-aero.mjs';
+import { buildMoonwellBook, MOONWELL, MARKETS } from '../scripts/books/moonwell.mjs';
 import { openWallet, saveCheckpoint, waitSynced, nightBalance, dustBalance, walletProviderFor } from '../scripts/wallet-lib.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -111,7 +111,7 @@ const LIMITS = { aero: [1_000, 25_000_000], debtUsd: [1_000, 50_000_000], ratio:
 
 const resolveBook = async (spec) => {
   if (spec.book === 'moonwell-aero') {
-    const b = await buildMoonwellAeroBook();
+    const b = await buildMoonwellBook('AERO');
     return { name: BOOKS['moonwell-aero'].name, venue: b.venue, q: b.book.positions[0], debt: b.book.debt, ratio: b.ratio, refBlock: b.refBlock };
   }
   const base = spec.book === 'custom' ? spec.custom ?? {} : BOOKS[spec.book];
@@ -124,7 +124,7 @@ const resolveBook = async (spec) => {
   const aero = clamp(base.aero, LIMITS.aero, 'aero');
   const debtUsd = clamp(base.debtUsd, LIMITS.debtUsd, 'debtUsd');
   const ratio = clamp(base.ratio, LIMITS.ratio, 'ratio');
-  const { slot } = await buildVenueSlot({ chainId: MOONWELL.chainId, pool: MOONWELL.pool, collateral: MOONWELL.aero });
+  const { slot } = await buildVenueSlot({ chainId: MOONWELL.chainId, pool: MARKETS.AERO.pool, collateral: MARKETS.AERO.token });
   return {
     name: spec.book === 'custom' ? 'Custom AERO book' : base.name,
     venue: slot,
@@ -165,7 +165,7 @@ const witnesses = {
 };
 const padding = () => ({
   chainId: 0n, pool: new Uint8Array(20), collateralIsToken0: false, decX: 0n, decY: 0n, feeBps: 0n,
-  syncBlock: 0n, syncTx: new Uint8Array(32), logIndex: 0n, refBlock: 0n, refTime: 0n, reserveX: 1n, reserveY: 1n,
+  syncBlock: 0n, syncTx: new Uint8Array(32), logIndex: 0n, refBlock: 0n, refTime: 0n, reserveX: 1n, reserveY: 1n, quoteRate: 0n,
 });
 const pad8 = (xs, fill) => [...xs, ...Array(SLOTS - xs.length).fill(null).map(fill)];
 const hexOf = (u) => Buffer.from(u).toString('hex');
@@ -286,8 +286,9 @@ const runJob = async (j) => {
   const q = b.q;
   const p = realisable(b.venue.reserveX, b.venue.reserveY, q, b.venue.feeBps);
   j.preview = {
-    markedUsd: Number(marked(b.venue.reserveX, b.venue.reserveY, q)) / 1e6,
-    realisableUsd: Number(p) / 1e6,
+    // quote micro-units -> USD via the slot's public rate (1.0 for USDC)
+    markedUsd: Number((marked(b.venue.reserveX, b.venue.reserveY, q) * b.venue.quoteRate) / MICRO) / 1e6,
+    realisableUsd: Number((p * b.venue.quoteRate) / MICRO) / 1e6,
     debtUsd: Number(b.debt) / 1e6,
     ratio: Number(b.ratio) / 1e6,
     baseRefBlock: String(b.refBlock),
@@ -381,7 +382,7 @@ const server = createServer(async (req, res) => {
       return send(req, res, 200, { ...status, queue: queue.length, busy, limits: { perIpPerHour: RATE_PER_HOUR, queueMax: QUEUE_MAX } });
     }
     if (req.method === 'GET' && url.pathname === '/api/books') {
-      return send(req, res, 200, { books: BOOKS, limits: LIMITS, venue: { chain: 'Base', pool: MOONWELL.pool, kind: 'Aerodrome volatile AERO/USDC (x*y=k)' } });
+      return send(req, res, 200, { books: BOOKS, limits: LIMITS, venue: { chain: 'Base', pool: MARKETS.AERO.pool, kind: 'Aerodrome volatile AERO/USDC (x*y=k)' } });
     }
     const m = /^\/api\/jobs\/([0-9a-f-]{36})$/.exec(url.pathname);
     if (req.method === 'GET' && m) {

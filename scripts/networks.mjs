@@ -23,8 +23,8 @@ export const NETWORKS = {
     addressPrefix: 'mn_addr_undeployed',
     faucet: null,
     explorer: null,
-    contract: '9c60fe0699ca183009462ab88009640d54f631dee9c0485caa4189e2f3888649',
-    demo: '93aba7d12e4370ea12c1af8ea9a0e17d17d086adf20a1cc92f86d2aa3287eb36',
+    contract: null, // the real books and the demo come from deployments/undeployed.json
+    demo: null,
     api: 'http://localhost:3034',
     public: false,
   },
@@ -57,8 +57,9 @@ export const NETWORKS = {
     addressPrefix: 'mn_addr_preprod',
     faucet: 'https://midnight-tmnight-preprod.nethermind.dev/',
     explorer: 'https://preprod.midnightexplorer.com/',
-    // v1 (Wave 1) book contract; replaced by the v2 deploy.
-    contract: '8086d2e3db45c9eb2a45b58796202d8e076e04c49e03142db36a98815bb30a05',
+    // The v2 books and demo come from deployments/preprod.json. The Wave 1
+    // contract (8086d2e3…0a05) stays on chain and is recorded in docs/WAVE1.md.
+    contract: null,
     demo: null,
     api: 'https://datum-api.ochinimus.app',
     public: true,

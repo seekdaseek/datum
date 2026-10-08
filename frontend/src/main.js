@@ -17,7 +17,7 @@ import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { resolveNetwork } from './config.js';
 import { verifyAttestation, tamperedCopy } from '../../scripts/verify-core.mjs';
 import { CHAINS, isPaddingSlot } from '../../scripts/provenance.mjs';
-import { buildMoonwellAeroBook } from '../../scripts/books/moonwell-aero.mjs';
+import { buildMoonwellBook } from '../../scripts/books/moonwell.mjs';
 import './style.css';
 
 const DEPLOYMENTS = import.meta.glob('../../deployments/*.json', { eager: true, import: 'default' });
@@ -127,26 +127,34 @@ const hero = (net) => {
   return [h, lead];
 };
 
-const realBook = (net, dep) => {
+const BOOK_TEXT = {
+  WELL: (f, a) => `All WELL supplied to Moonwell on Base at block ${num(a.baseRefBlock)}, against the most debt Moonwell’s own ${Math.round(f.collateralFactor * 100)}% collateral factor lets it secure. WELL’s main exit is the Aerodrome volatile WELL/WETH pool (x·y=k, 1% fee), holding ${num(f.poolCollateralReserve)} WELL and ${num(f.poolQuoteReserve, 2)} WETH: ${num(f.supplied)} WELL would have to sell into it.`,
+  AERO: (f, a) => `All AERO supplied to Moonwell on Base at block ${num(a.baseRefBlock)}, against the most debt Moonwell’s own ${Math.round(f.collateralFactor * 100)}% collateral factor lets it secure. The exit is the Aerodrome volatile AERO/USDC pool, the deepest AERO pool on Base.`,
+};
+
+const realBook = (net, market, rec) => {
   const s = el('section', 'card');
-  s.append(el('h2', null, 'A real book: Moonwell’s AERO collateral on Base'));
-  const a = dep?.book?.attest;
+  s.append(el('h2', null, `A real book: Moonwell’s ${market} collateral on Base`));
+  const a = rec?.attest;
   if (!a?.figures) {
-    s.append(el('p', 'lede', 'The real book is not attested on this network yet.'));
+    s.append(el('p', 'lede', 'This book is not attested on this network yet.'));
     return s;
   }
   const f = a.figures;
-  s.append(el('p', 'lede',
-    `All AERO supplied to Moonwell on Base at block ${num(a.baseRefBlock)}, against the most debt Moonwell’s own ${Math.round(f.collateralFactor * 100)}% collateral factor lets it secure. The exit is the Aerodrome volatile AERO/USDC pool, the deepest AERO pool on Base. This book is public by construction so you can recompute it; a lender’s own book would not be.`));
+  s.append(el('p', 'lede', BOOK_TEXT[market]?.(f, a) ?? ''));
 
   const grid = el('div', 'triple');
   grid.append(
-    el('div', 'tcol', el('div', 'tlabel', 'At the oracle mark'), el('div', 'tbig', x2(f.markedCoverage)), el('div', 'tsub', `${usd(f.markedUsd)} at $${f.oraclePrice.toFixed(4)}`)),
+    el('div', 'tcol', el('div', 'tlabel', 'At the oracle mark'), el('div', 'tbig', x2(f.markedCoverage)), el('div', 'tsub', `${usd(f.markedUsd)} at $${f.oraclePrice.toPrecision(4)}`)),
     el('div', 'tcol gap', el('div', 'tlabel', 'Does not exist at exit'), el('div', 'tbig neg', usd(f.gapUsd)), el('div', 'tsub', `${f.gapPct.toFixed(1)}% of the marked value`)),
     el('div', 'tcol', el('div', 'tlabel', 'At realisable exit'), el('div', 'tbig', x2(f.realisableCoverage)), el('div', 'tsub', `${usd(f.realisableUsd)} sold into the pool`)),
   );
   s.append(grid);
-  s.append(el('p', 'lede small', `${num(f.suppliedAero)} AERO supplied · debt it may secure ${usd(f.debtUsd)} · coverage = value ÷ that debt`));
+  s.append(el('p', 'lede small', `${num(f.supplied)} ${market} supplied · debt it may secure ${usd(f.debtUsd)} · coverage = value ÷ that debt · verdict on chain: ${a.covered === false ? 'NOT COVERED' : 'COVERED'} at Moonwell’s own 1.00x`));
+  if (f.quoteLeg) {
+    const l = f.quoteLeg;
+    s.append(el('p', 'lede small', `The pool is quoted in WETH, so the ${num(l.wethSold, 2)} WETH it pays out is valued at Moonwell’s own WETH price, at the mark. Measured against the only x·y=k WETH/USDC pool on Base (${num(l.wethReserve)} WETH / ${usd(l.usdcReserve)}), selling it there would fetch ${usd(l.throughPoolUsd)}, ${l.extraImpactPct.toFixed(1)}% less. WETH’s deeper concentrated-liquidity pools are not measured here.`));
+  }
 
   const out = el('div', 'recompute');
   const btn = el('button', 'btn ghost', `Recompute from Base at block ${num(a.baseRefBlock)}`);
@@ -154,13 +162,12 @@ const realBook = (net, dep) => {
     btn.disabled = true;
     out.textContent = 'Reading Moonwell and the pool from a public Base RPC…';
     try {
-      const b = await buildMoonwellAeroBook({ refBlock: BigInt(a.baseRefBlock) });
-      const same = (k, tol = 1e-6) => Math.abs(b.figures[k] - f[k]) <= tol * Math.max(1, Math.abs(f[k]));
-      const keys = ['suppliedAero', 'oraclePrice', 'markedUsd', 'debtUsd', 'realisableUsd'];
-      const ok = keys.every((k) => same(k));
+      const b = await buildMoonwellBook(market, { refBlock: BigInt(a.baseRefBlock) });
+      const same = (k) => Math.abs(b.figures[k] - f[k]) <= 1e-6 * Math.max(1, Math.abs(f[k]));
+      const ok = ['supplied', 'oraclePrice', 'markedUsd', 'debtUsd', 'realisableUsd'].every(same);
       out.innerHTML = '';
       out.append(el('span', `vchip ${ok ? 'ok' : 'bad'}`, ok ? 'MATCHES BASE' : 'DIFFERS'),
-        ` supplied ${num(b.figures.suppliedAero)} AERO · oracle $${b.figures.oraclePrice.toFixed(6)} · marked ${usd(b.figures.markedUsd)} · realisable ${usd(b.figures.realisableUsd)}`);
+        ` supplied ${num(b.figures.supplied)} ${market} · oracle $${b.figures.oraclePrice.toPrecision(6)} · marked ${usd(b.figures.markedUsd)} · realisable ${usd(b.figures.realisableUsd)}`);
     } catch (e) {
       out.textContent = `Could not read Base: ${e.message}`;
     } finally {
@@ -189,7 +196,7 @@ const attestationCard = (net, lib, { L, tx }, address, label) => {
   s.append(kv);
 
   const table = el('table', 'venues');
-  table.append(el('thead', null, el('tr', null, ...['Chain', 'Pool', 'Sync block · log', 'Sync tx', 'Ref block', 'Collateral reserve', 'USD reserve'].map((t) => el('th', null, t)))));
+  table.append(el('thead', null, el('tr', null, ...['Chain', 'Pool', 'Sync block · log', 'Sync tx', 'Ref block', 'Collateral reserve', 'Quote reserve', 'Quote at'].map((t) => el('th', null, t)))));
   const body = el('tbody');
   for (const slot of L.venues) {
     if (isPaddingSlot(slot)) continue;
@@ -200,11 +207,12 @@ const attestationCard = (net, lib, { L, tx }, address, label) => {
       el('td', 'mono', short('0x' + hex(slot.syncTx), 6)),
       el('td', 'mono num', num(slot.refBlock)),
       el('td', 'mono num', num(fromMicro(slot.reserveX))),
-      el('td', 'mono num', num(fromMicro(slot.reserveY)))));
+      el('td', 'mono num', num(fromMicro(slot.reserveY), 2)),
+      el('td', 'mono num', '$' + fromMicro(slot.quoteRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))));
   }
   table.append(body);
   s.append(el('div', 'tablewrap', table));
-  s.append(el('p', 'lede small', 'Published in the clear and bound into the proof by venuesHash, so anyone can re-fetch that Sync log and check it.'));
+  s.append(el('p', 'lede small', 'Published in the clear and bound into the proof by venuesHash, so anyone can re-fetch that Sync log, and the quote’s USD rate at that block, and check them.'));
 
   if (L.attestationCount > 1n) {
     const hist = el('div', 'history');
@@ -491,19 +499,26 @@ const boot = async () => {
   setNetworkId(net.id);
   const lib = await import('../../build/datum-full/contract/index.js');
   const dep = DEPLOYMENTS[`../../deployments/${net.id}.json`];
-  if (dep?.book?.address) net.contract = dep.book.address;
   if (dep?.demo?.address) net.demo = dep.demo.address;
+  const books = Object.entries(dep?.books ?? {}).sort(([x], [y]) => (x === 'WELL' ? -1 : y === 'WELL' ? 1 : 0));
 
   const app = document.getElementById('app');
   app.innerHTML = '';
   app.append(...hero(net));
 
-  let book = null;
-  try { book = await readContract(net, lib, net.contract); } catch (e) { app.append(el('div', 'errbox', el('div', 'err-title', 'Could not read the book contract'), el('pre', 'err-detail', e.message))); }
-  const preview = book ? book.L.venues.find((v) => !isPaddingSlot(v)) : null;
-
-  app.append(realBook(net, dep));
-  if (book) app.append(attestationCard(net, lib, book, net.contract, 'The real book’s attestation on chain'));
+  // Previews and the comparison price the sample books against the AERO pool
+  // as last published on chain.
+  let preview = null;
+  for (const [market, rec] of books) {
+    app.append(realBook(net, market, rec));
+    try {
+      const st = await readContract(net, lib, rec.address);
+      app.append(attestationCard(net, lib, st, rec.address, `The ${market} book’s attestation on chain`));
+      if (market === 'AERO') preview = st.L.venues.find((v) => !isPaddingSlot(v));
+    } catch (e) {
+      app.append(el('div', 'errbox', el('div', 'err-title', `Could not read the ${market} book contract`), el('pre', 'err-detail', e.message)));
+    }
+  }
 
   const demoMount = el('div');
   const mountDemo = (st) => { demoMount.innerHTML = ''; demoMount.append(attestationCard(net, lib, st, net.demo, 'Demo contract: every book attested from this page')); };
