@@ -14,8 +14,12 @@
 import { readFileSync } from 'node:fs';
 
 export const PROVER_PEAK_MB = 454;
-export const FLOOR_MB = 500;
-export const NEED_MB = 950;
+// The memory kept free for everything else on the host. 500 on the shared 4 GB
+// VPS; a dedicated 2 GB box sets PROVER_FLOOR_MB lower (see
+// ops/ecosystem.dedicated.config.cjs). NEED_MB is the peak plus this floor,
+// rounded to the nearest 50 MB (500 -> 950, as agreed for the shared host).
+export const FLOOR_MB = Number(process.env.PROVER_FLOOR_MB) > 0 ? Number(process.env.PROVER_FLOOR_MB) : 500;
+export const NEED_MB = Math.round((PROVER_PEAK_MB + FLOOR_MB) / 50) * 50;
 export const RETRY_MS = 30_000;
 export const GIVE_UP_MS = 10 * 60_000;
 
