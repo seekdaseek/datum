@@ -7,6 +7,28 @@
 > Moonwell's AERO collateral, contract `⟨AERO_ADDR⟩`, transaction `⟨AERO_TX⟩`, block ⟨AERO_BLOCK⟩.
 > Page: <https://datum.ochinimus.app> · hosted attest service: <https://datum-api.ochinimus.app/api/status> · judge guide: [JUDGE_GUIDE.md](JUDGE_GUIDE.md) (every claim, five minutes).
 
+## Judge steps
+
+**On the page, <https://datum.ochinimus.app> (about five minutes, no wallet, no key):**
+
+1. Read the two real books. Press **Recompute from Base** on each: the page re-reads Moonwell and the Aerodrome pool at the stated Base block and shows **MATCHES BASE**.
+2. On the same cards press **Verify from chain**: expect **VERIFIED**. Then **Tamper with a copy**: one reserve changed by one millionth of a dollar, expect **MISMATCH** on exactly two checks. Nothing on chain changes.
+3. In **Attest a book yourself** wait for the sponsor pill to read **Sponsor ready**, keep **Overlevered AERO book** selected and press **Attest this book on Midnight**. Watch each step to the transaction, block and verdict (**NOT COVERED**); the page then verifies the result from chain by itself.
+
+**From a terminal (optional):**
+
+```bash
+git clone https://github.com/seekdaseek/datum && cd datum
+npm install && npm run build
+export BLOCKFROST_PROJECT_ID=...                      # a free Midnight Preprod project at blockfrost.io; only the CLI needs it
+node scripts/verify.mjs --network preprod            # every check, exits 0
+node scripts/verify.mjs --network preprod --tamper   # MISMATCH, exits 1
+npm test                                             # 86 tests
+node test/mutants.mjs                                # 14 of 14 mutants killed
+```
+
+Every claim with its expected output: [JUDGE_GUIDE.md](JUDGE_GUIDE.md).
+
 ## The headline, on two real books
 
 Everything supplied to two [Moonwell](https://moonwell.fi) markets on Base, each sold into its main exit, a factory-vouched Aerodrome volatile (x·y=k) pool. **The debt side is Moonwell's borrowing cap for that collateral** (supplied × oracle price × collateral factor): the most that could be borrowed against it, **not the borrows actually outstanding**.
@@ -39,7 +61,9 @@ A flip from COVERED to NOT COVERED is shown on the AERO pool by the overlevered 
 | Slots | 8 (k=15) | 4 (k=15, 32,606 rows). The 8-slot v2 circuit was k=16 and peaked at 940 MB in the prover; 4 slots peak at 482 MB, which is what lets a prover run on a shared 4 GB host |
 | User action | Read-only page | **Attest a book** from the page: hosted prover, sponsor wallet pays DUST, then the page verifies the result from chain |
 | Control | None | A faithful mark-based check, in Compact, run on the same private book |
-| Tests | 22 | 64 (simulator, provenance replay, verifier, control), 6 real-ZK `/check` scenarios, 11 of 11 mutants killed |
+| Tests | 22 | 86 (simulator, provenance replay, verifier, control, capacity gate, redaction), 6 of 6 real-ZK `/check` scenarios, 14 of 14 mutants killed |
+| Indexer | Midnight's public Preprod indexer | Blockfrost's: Midnight retired its own Preprod indexer and RPC on 9 Oct 2026. The page reads it through datum-api's read-only relay (one fixed contract query, cached, rate limited); the Blockfrost project token stays on the server and in no log |
+| Hosting | Static page only | A dedicated 2 GB server for the attest service: on-demand prover, a memory gate sized for the box, its own Cloudflare tunnel |
 | Review | None | Midnight Expert checklists, 16 findings fixed or answered ([docs/REVIEW.md](docs/REVIEW.md)) |
 
 Wave 1 record: [docs/WAVE1.md](docs/WAVE1.md).
@@ -70,11 +94,12 @@ Claiming proceeds above what the pool would pay fails the proof. Claiming less o
 
 ```bash
 npm install && npm run build
+export BLOCKFROST_PROJECT_ID=...                      # free Midnight Preprod project at blockfrost.io (the CLI reads the indexer directly; the page needs no key)
 node scripts/verify.mjs --network preprod            # every check, public data only, exits 0
 node scripts/verify.mjs --network preprod --tamper   # one reserve changed: MISMATCH, exits 1
-npm test                                             # 64 tests
+npm test                                             # 86 tests
 npm run test:zk                                      # 6 scenarios through a real proof server (needs one on :6300)
-node test/mutants.mjs                                # 11 mutants, each must be killed
+node test/mutants.mjs                                # 14 mutants, each must be killed
 ```
 
 Or on the page: **Verify from chain**, then **Tamper with a copy**. Step-by-step with expected output: [JUDGE_GUIDE.md](JUDGE_GUIDE.md).
@@ -124,7 +149,7 @@ A judge picks a sample book (or edits one), presses **Attest this book on Midnig
 - **`persistentCommit` / `persistentHash`:** the chained book commitment and the venue digest, recomputed byte for byte by the CLI and the browser through an exported `pure` circuit.
 - **DUST sponsorship:** a sponsor wallet registers NIGHT for DUST and pays every visitor's fee.
 - **Midnight.js:** `deployContract`, `findDeployedContract`, `callTx`, the HTTP proof provider, the indexer public-data provider.
-- **Indexer:** the page and the CLI read contract state over its GraphQL API with no wallet.
+- **Indexer:** the page and the CLI read contract state over its GraphQL API with no wallet. Since 9 October 2026 Preprod's indexer is Blockfrost's; the CLI takes a free project token from `BLOCKFROST_PROJECT_ID`, and the page goes through datum-api's read-only relay (`POST /api/indexer`, the one contract query the page sends, nothing else).
 
 **Why Midnight:** the depth is public and the book is private, and Midnight is a chain where a contract can hold both at once and prove a statement that joins them.
 
@@ -153,10 +178,10 @@ Toolchain: Compact 0.31.1 (language 0.23, ledger 8), compact devtools 0.5.2, Nod
 ```bash
 npm install
 npm run build            # both contracts, --skip-zk
-npm test                 # 64 tests
+npm test                 # 86 tests
 compact compile contract/src/datum.compact build/datum-full   # proving keys, ~22 s
 npm run test:zk          # 6 scenarios through the real proof server's /check
-node test/mutants.mjs    # 11 mutants
+node test/mutants.mjs    # 14 mutants
 ```
 
 Proving keys (4 slots, k=15, 32,606 rows by `zkir mock-compile`):

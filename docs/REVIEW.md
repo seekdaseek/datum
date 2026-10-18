@@ -9,7 +9,7 @@
 
 Every finding is either fixed, with the commit, or answered with the reason it stays.
 
-**After all fixes:** 80 tests pass, 14 of 14 mutants are killed (`node test/mutants.mjs`), 6 of 6 real-ZK scenarios pass, and `attest` is k=15 at 32,555 rows (`zkir mock-compile`); the new `rotateAttestor` circuit is k=13 at 4,457 rows.
+**After all fixes:** 80 tests passed (86 now, with the Wave 2 service tests), 14 of 14 mutants are killed (`node test/mutants.mjs`), 6 of 6 real-ZK scenarios pass, and `attest` is k=15 at 32,555 rows (`zkir mock-compile`); the new `rotateAttestor` circuit is k=13 at 4,457 rows.
 
 ## Manual checklist pass
 

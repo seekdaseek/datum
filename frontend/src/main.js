@@ -100,7 +100,7 @@ const verifyPanel = (container, { L, lib, venues, title }) => {
     const failed = r.sections.flatMap((s) => s.checks.filter((c) => !c.ok));
     container.append(
       el('p', `vsum ${r.ok ? 'ok' : 'bad'}`, r.ok
-        ? 'Every check passed using public data only: the Midnight indexer, the contract’s own pure circuit, and a public Base RPC.'
+        ? 'Every check passed using public data only: the Midnight indexer (Blockfrost’s, through datum-api’s read-only relay), the contract’s own pure circuit, and a public Base RPC.'
         : `${failed.length} check${failed.length === 1 ? '' : 's'} failed. This venue array is not what the proof bound, or not what Base says.`),
     );
     return r;
@@ -484,7 +484,10 @@ const boundary = () => {
 
 const footer = (net) => el('footer', 'foot',
   el('a', null, 'Source and judge guide'), ' · ',
-  el('span', 'mono', `node scripts/verify.mjs --network ${net.id} --tamper`));
+  el('span', 'mono', `node scripts/verify.mjs --network ${net.id} --tamper`),
+  net.blockfrost
+    ? el('p', 'lede small', 'This page reads Midnight Preprod’s indexer, which is Blockfrost’s since Midnight retired its own on 9 October 2026, through a read-only relay on datum-api: one fixed contract query, cached for 20 seconds and rate limited. The relay holds the project token; this page holds none.')
+    : null);
 
 // ---------------------------------------------------------------------------
 // boot
