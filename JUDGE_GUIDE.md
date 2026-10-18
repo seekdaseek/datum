@@ -22,7 +22,7 @@ On the same card:
 In **Attest a book yourself**:
 
 - Read the **privacy boundary**: the hosted demo prover sees the sample book; a real lender proves locally.
-- The pill shows the sponsor's state. It should read **Sponsor ready**. If it reads that the sponsor wallet is syncing with Midnight, it is catching up with the chain after Preprod's indexer moved to Blockfrost on 9 October; sections 1, 2, 4 and 5 do not depend on it.
+- The pill shows the sponsor's state. It should read **Sponsor ready**.
 - Keep **Overlevered AERO book** selected (the preview shows the balance-threshold check passing and datum failing) and press **Attest this book on Midnight**.
 - Watch the steps: reading fresh reserves from Base, preparing the private book, proving in zero knowledge, the sponsor adding DUST, submitting, the block. Each step shows its own seconds as it runs.
 - The result shows the transaction hash, block and verdict (**NOT COVERED** for this book), then the page verifies it from chain by itself: expect **VERIFIED**.

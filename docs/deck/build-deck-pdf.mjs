@@ -77,7 +77,9 @@ S('WHAT IS LIVE', 'On Midnight Preprod, with a hosted prover anyone can use',
    <p class="mono t">WELL book ${short(W.address)}<br>attest tx ${short(W.attest.txHash)} · block ${int(W.attest.block)}<br>AERO book ${short(A.address)}<br>attest tx ${short(A.attest.txHash)} · block ${int(A.attest.block)}<br>demo ${short(dep.demo.address)}<br>live attest tx ${short(demoTx)} · block ${int(demoBlock)}</p></div>
    <div class="card"><div class="k">MEASURED ON THE LIVE SERVICE</div>
    <p>Attest from the page to verified result: <b>${e2eS} s</b>.<br>Proof: <b>${proofS} s</b>, prover peak <b>${peakMb} MB</b>.<br>datum-api at rest: <b>${rssMb} MB</b>.</p>
-   <p class="s">A 2 GB server, the prover started per job and stopped after five idle minutes, a memory gate that never starts it into an out-of-memory kill.</p></div></div>
+   <p class="s">Sized for a 2 GB server: the prover is started per job, stopped after five idle minutes, and only started when memory allows, so it cannot take the host down.</p></div></div>
+   <div class="card wide"><div class="k">ONE LIVE ATTESTATION, STEP BY STEP (seconds)</div>
+   <div class="steps"><div><b>5</b><span>read fresh reserves from Base</span></div><div><b>1</b><span>prepare the private book</span></div><div><b>${proofS}</b><span>prove in zero knowledge</span></div><div><b>3</b><span>sponsor adds DUST</span></div><div><b>16</b><span>submit to Midnight</span></div><div><b>20</b><span>wait for the block</span></div><div><b>8</b><span>page verifies from chain</span></div></div></div>
    <p class="s">datum.ochinimus.app (page) · datum-api.ochinimus.app (attest service, read-only indexer relay). Preprod's indexer is Blockfrost's; the project token stays on the server.</p>`);
 
 S('WHAT CHANGED SINCE WAVE 1', 'From a read-only page to an attestation anyone can make and check',
@@ -88,7 +90,7 @@ S('WHAT CHANGED SINCE WAVE 1', 'From a read-only page to an attestation anyone c
    <tr><td>Contract</td><td>Last verdict only</td><td>Exact fee bound, ledger-enforced freshness, distinct pools, attestor key, chained history</td></tr>
    <tr><td>User action</td><td>Read-only page</td><td>Attest a book from the page; the sponsor pays DUST; the page verifies the result</td></tr>
    <tr><td>Tests</td><td>22</td><td>86 tests, 6 real-ZK checks, 14 of 14 mutants killed</td></tr>
-   <tr><td>Hosting</td><td>Static page</td><td>Dedicated 2 GB server; Blockfrost indexer behind a read-only relay</td></tr></table>`);
+   <tr><td>Hosting</td><td>Static page</td><td>Dedicated small server; Blockfrost indexer behind a read-only relay</td></tr></table>`);
 
 S('JUDGE STEPS', 'Five minutes, no wallet, no key',
   `<ol><li>Open <b>datum.ochinimus.app</b>. Press <b>Recompute from Base</b> on each book: it shows MATCHES BASE.</li>
@@ -128,6 +130,7 @@ h1.big { font-size: 120px; margin: 70px 0 26px; letter-spacing: -.02em }
 .mono { font-family: "SF Mono", Menlo, Consolas, monospace } .code { font-size: 17px; line-height: 1.7; color: #CFE0FF } .t { font-size: 15px; line-height: 1.7 }
 table { width: 100%; border-collapse: collapse; font-size: 18px } th { text-align: left; color: #8C9AB5; font-size: 13px; letter-spacing: .12em; padding: 6px 12px } td { padding: 9px 12px; border-top: 1px solid #243049; vertical-align: top } td:first-child { color: #7FA8E8; font-weight: 700; width: 140px } td:nth-child(2) { color: #8C9AB5; width: 250px }
 ol { padding-left: 26px; margin: 0 0 6px } li { margin-bottom: 12px }
+.steps { display: flex; gap: 12px; margin-top: 10px } .steps div { flex: 1; background: #0D1220; border-radius: 10px; padding: 10px 12px } .steps b { display: block; font-size: 34px; color: #5BC98A } .steps span { color: #8C9AB5; font-size: 14px; line-height: 1.25; display: block }
 .foot { position: absolute; bottom: 30px; left: 64px; right: 64px; color: #8C9AB5; font-size: 16px }
 `;
 const html = `<!doctype html><html><head><meta charset="utf-8"><title>datum — Wave 2</title><style>${css}</style></head><body>${slides.join('\n')}</body></html>`;
