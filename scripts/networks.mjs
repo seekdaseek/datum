@@ -50,9 +50,20 @@ export const NETWORKS = {
   preprod: {
     id: 'preprod',
     label: 'Preprod',
-    node: 'https://rpc.preprod.midnight.network',
-    indexerHttp: 'https://indexer.preprod.midnight.network/api/v4/graphql',
-    indexerWs: 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws',
+    // Midnight retired its own Preprod endpoints on 9 Oct 2026; the public
+    // indexer and RPC are now Blockfrost's, and every request needs a project
+    // token. The token stays on the server. `indexerHttp` is datum-api's
+    // READ-ONLY relay, which answers only the contract read the page sends;
+    // `blockfrost` holds the real endpoints, used by the service and the wallet
+    // scripts through withBlockfrost() with the token from the environment.
+    node: 'https://rpc.midnight-preprod.blockfrost.io',
+    indexerHttp: 'https://datum-api.ochinimus.app/api/indexer',
+    indexerWs: 'wss://midnight-preprod.blockfrost.io/api/v0/ws',
+    blockfrost: {
+      node: 'https://rpc.midnight-preprod.blockfrost.io',
+      indexerHttp: 'https://midnight-preprod.blockfrost.io/api/v0',
+      indexerWs: 'wss://midnight-preprod.blockfrost.io/api/v0/ws',
+    },
     proofServer: 'http://localhost:6300',
     addressPrefix: 'mn_addr_preprod',
     faucet: 'https://midnight-tmnight-preprod.nethermind.dev/',
@@ -64,6 +75,24 @@ export const NETWORKS = {
     api: 'https://datum-api.ochinimus.app',
     public: true,
   },
+};
+
+/**
+ * The network with its real endpoints, for code that holds a Blockfrost project
+ * token (the service, the wallet scripts). The clients take URLs only, so the
+ * token goes in as ?project_id=. A network without a `blockfrost` block is
+ * returned unchanged. Never log the result.
+ */
+export const withBlockfrost = (net, projectId) => {
+  if (!net.blockfrost) return net;
+  if (!projectId) throw new Error(`${net.id} needs BLOCKFROST_PROJECT_ID`);
+  const q = (u) => `${u}?project_id=${encodeURIComponent(projectId)}`;
+  return {
+    ...net,
+    node: q(net.blockfrost.node),
+    indexerHttp: q(net.blockfrost.indexerHttp),
+    indexerWs: q(net.blockfrost.indexerWs),
+  };
 };
 
 export const RATIO_SCALE = 1_000_000n;

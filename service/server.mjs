@@ -25,6 +25,10 @@
 // ENVIRONMENT (service/.env.service, mode 0600 — never committed)
 //   DATUM_NETWORK, SPONSOR_SEED, DEMO_ATTESTOR_SECRET, PRIVATE_STATE_PASSWORD,
 //   DEMO_CONTRACT, PROOF_SERVER, PORT, ALLOWED_ORIGINS, STATE_DIR
+//   BLOCKFROST_PROJECT_ID (Preprod and mainnet only; service/.env.blockfrost,
+//   listed after .env.service in SERVICE_ENV). The token never leaves this
+//   process: stdout, stderr and every JSON body go through service/redact.mjs,
+//   and the page reads the indexer through the read-only relay POST /api/indexer.
 //
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -42,7 +46,10 @@ import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 
-import { NETWORKS } from '../scripts/networks.mjs';
+import { NETWORKS, withBlockfrost } from '../scripts/networks.mjs';
+import { CONTRACT_ACTION_QUERY, normalizeQuery } from '../scripts/relay-queries.mjs';
+import { makeRedactor, guardStream } from './redact.mjs';
+import tls from 'node:tls';
 import { buildVenueSlot } from '../scripts/provenance.mjs';
 import { buildMoonwellBook, MOONWELL, MARKETS } from '../scripts/books/moonwell.mjs';
 import { openWallet, saveCheckpoint, waitSynced, nightBalance, dustBalance, walletProviderFor } from '../scripts/wallet-lib.mjs';
@@ -67,10 +74,43 @@ const envFiles = (process.env.SERVICE_ENV ?? resolve(ROOT, 'service/.env.service
 const ENV = Object.assign({}, ...envFiles.map(loadEnv), process.env);
 const need = (k) => { if (!ENV[k]) { console.error(`service: ${k} is not set`); process.exit(1); } return ENV[k]; };
 
+// Nothing the process writes may carry the Blockfrost token.
+const redact = makeRedactor([ENV.BLOCKFROST_PROJECT_ID]);
+guardStream(process.stdout, redact);
+guardStream(process.stderr, redact);
+
 const NET = NETWORKS[ENV.DATUM_NETWORK ?? 'preprod'];
 if (!NET) { console.error(`service: unknown network ${ENV.DATUM_NETWORK}`); process.exit(1); }
 setNetworkId(NET.id); // before any provider is constructed
-const net = { ...NET, proofServer: ENV.PROOF_SERVER ?? NET.proofServer };
+if (NET.blockfrost) need('BLOCKFROST_PROJECT_ID');
+const net = { ...withBlockfrost(NET, ENV.BLOCKFROST_PROJECT_ID), proofServer: ENV.PROOF_SERVER ?? NET.proofServer };
+
+// Blockfrost usage, counted client side: HTTP requests (fetch) and TLS
+// connections (every WebSocket and RPC socket). Blockfrost's own dashboard is
+// the authority; this is what the service itself can see, persisted so a
+// restart does not reset it.
+const BF_HOSTS = NET.blockfrost ? new Set(Object.values(NET.blockfrost).map((u) => new URL(u).hostname)) : new Set();
+const BF_FILE = resolve(ENV.STATE_DIR ?? resolve(ROOT, 'state'), `${NET.id}-blockfrost-requests.json`);
+const bf = (() => {
+  try { return { fetches: 0, connections: 0, since: new Date().toISOString(), ...JSON.parse(readFileSync(BF_FILE, 'utf8')) }; } catch { return { fetches: 0, connections: 0, since: new Date().toISOString() }; }
+})();
+if (BF_HOSTS.size) {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    try { if (BF_HOSTS.has(new URL(typeof input === 'string' ? input : input.url ?? String(input)).hostname)) bf.fetches++; } catch {}
+    return realFetch(input, init);
+  };
+  const realConnect = tls.connect;
+  tls.connect = (...a) => {
+    try {
+      const o = typeof a[0] === 'object' ? a[0] : typeof a[1] === 'object' ? a[1] : {};
+      if (BF_HOSTS.has(o.servername ?? o.host)) bf.connections++;
+    } catch {}
+    return realConnect.apply(tls, a);
+  };
+  setInterval(() => { try { writeFileSync(BF_FILE, JSON.stringify(bf)); } catch {} }, 30_000).unref();
+  process.on('exit', () => { try { writeFileSync(BF_FILE, JSON.stringify(bf)); } catch {} });
+}
 
 const PORT = Number(ENV.PORT ?? 3034);
 const STATE_DIR = resolve(ENV.STATE_DIR ?? resolve(ROOT, 'state'));
@@ -403,7 +443,7 @@ const pump = async () => {
   try {
     await runJob(j);
   } catch (e) {
-    j.error = e?.message ?? String(e);
+    j.error = redact(e?.message ?? String(e));
     step(j, 'failed');
     console.error(`job ${j.id} failed: ${j.error}`);
   } finally {
@@ -430,7 +470,63 @@ const send = (req, res, code, body, extra = {}) => {
   const origin = req.headers.origin;
   const cors = origin && ALLOWED.includes(origin) ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' } : {};
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...cors, ...extra });
-  res.end(JSON.stringify(body, (_, v) => (typeof v === 'bigint' ? v.toString() : v)));
+  res.end(redact(JSON.stringify(body, (_, v) => (typeof v === 'bigint' ? v.toString() : v))));
+};
+
+// ---------------------------------------------------------------------------
+// the page's read-only indexer relay
+// ---------------------------------------------------------------------------
+// The Preprod indexer is Blockfrost's and needs a project token the page must
+// never hold. The page POSTs the one query it uses (scripts/relay-queries.mjs)
+// to /api/indexer; the service checks it is exactly that query with a 32-byte
+// hex address, answers from a short cache, and asks Blockfrost with the token
+// as a header. Anything else is refused before it reaches the indexer.
+const realUpstreamFetch = (...a) => globalThis.fetch(...a);
+const RELAY_TTL_MS = 20_000;
+const RELAY_RATE = 60; // per client IP per minute
+const relayCache = new Map(); // address -> { at, body } or { pending: Promise }
+const relayHits = new Map(); // ip -> [timestamps]
+const relayStats = { served: 0, cacheHits: 0, upstream: 0, refused: 0, limited: 0 };
+const RELAY_Q = normalizeQuery(CONTRACT_ACTION_QUERY);
+const relayUpstream = async (addr) => {
+  relayStats.upstream++;
+  const r = await realUpstreamFetch(NET.blockfrost.indexerHttp, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', project_id: ENV.BLOCKFROST_PROJECT_ID },
+    body: JSON.stringify({ query: CONTRACT_ACTION_QUERY, variables: { addr } }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!r.ok) throw new Error(`upstream HTTP ${r.status}`);
+  const body = await r.json();
+  if (body.errors?.length) throw new Error('upstream query error');
+  return { data: body.data };
+};
+const relay = async (req, res) => {
+  if (!NET.blockfrost) return send(req, res, 404, { error: 'not found' });
+  const ip = clientIp(req);
+  const now = Date.now();
+  const recent = (relayHits.get(ip) ?? []).filter((t) => now - t < 60_000);
+  if (recent.length >= RELAY_RATE) { relayStats.limited++; return send(req, res, 429, { error: 'too many indexer reads; slow down' }, { 'Retry-After': '30' }); }
+  relayHits.set(ip, [...recent, now]);
+  const body = await readBody(req);
+  const addr = body?.variables?.addr;
+  if (typeof body.query !== 'string' || normalizeQuery(body.query) !== RELAY_Q || typeof addr !== 'string' || !/^[0-9a-f]{64}$/i.test(addr) || Object.keys(body.variables).length !== 1) {
+    relayStats.refused++;
+    return send(req, res, 400, { error: 'this relay answers only the contract read the page sends' });
+  }
+  const key = addr.toLowerCase();
+  const hit = relayCache.get(key);
+  let out;
+  if (hit?.body && now - hit.at < RELAY_TTL_MS) { relayStats.cacheHits++; out = hit.body; }
+  else if (hit?.pending) { relayStats.cacheHits++; out = await hit.pending; }
+  else {
+    const pending = relayUpstream(key);
+    relayCache.set(key, { pending });
+    try { out = await pending; relayCache.set(key, { at: Date.now(), body: out }); } catch (e) { relayCache.delete(key); throw e; }
+  }
+  relayStats.served++;
+  if (relayCache.size > 500) relayCache.clear();
+  return send(req, res, 200, out, { 'Cache-Control': 'public, max-age=10' });
 };
 
 const readBody = (req) => new Promise((ok, fail) => {
@@ -446,8 +542,9 @@ const server = createServer(async (req, res) => {
   }
   try {
     if (req.method === 'GET' && url.pathname === '/api/status') {
-      return send(req, res, 200, { ...status, queue: queue.length, busy, limits: { perIpPerHour: RATE_PER_HOUR, queueMax: QUEUE_MAX } });
+      return send(req, res, 200, { ...status, queue: queue.length, busy, limits: { perIpPerHour: RATE_PER_HOUR, queueMax: QUEUE_MAX }, ...(NET.blockfrost ? { blockfrost: { requestsCounted: { http: bf.fetches, connections: bf.connections, since: bf.since }, relay: relayStats } } : {}) });
     }
+    if (req.method === 'POST' && url.pathname === '/api/indexer') return await relay(req, res);
     if (req.method === 'GET' && url.pathname === '/api/books') {
       return send(req, res, 200, { books: BOOKS, limits: LIMITS, venue: { chain: 'Base', pool: MARKETS.AERO.pool, kind: 'Aerodrome volatile AERO/USDC (x*y=k)' } });
     }
@@ -492,6 +589,6 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => console.log(`datum sponsor service on 127.0.0.1:${PORT} (${NET.id})`));
 boot().catch((e) => {
   status.state = 'down';
-  status.error = e?.message ?? String(e);
+  status.error = redact(e?.message ?? String(e));
   console.error(`boot failed: ${status.error}`);
 });

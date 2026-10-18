@@ -52,7 +52,7 @@ module.exports = {
       args: [...SCOPE('1G', '512M'), '--', ...HARDEN, '/usr/bin/node', '/opt/datum/service/server.mjs'],
       cwd: '/opt/datum',
       env: {
-        SERVICE_ENV: '/opt/datum/service/.env.service',
+        SERVICE_ENV: '/opt/datum/service/.env.service,/opt/datum/service/.env.blockfrost',
         STATE_DIR: '/opt/datum/state',
         PROOF_SERVER: 'http://127.0.0.1:6310',
         PORT: '3034',

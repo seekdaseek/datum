@@ -14,7 +14,7 @@
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 
 export { NETWORKS } from './networks.mjs';
-import { NETWORKS } from './networks.mjs';
+import { NETWORKS, withBlockfrost } from './networks.mjs';
 
 export const DEFAULT_NETWORK = 'undeployed';
 
@@ -37,5 +37,12 @@ export const applyNetwork = (argv = process.argv) => {
   }
 
   setNetworkId(net.id);
-  return net;
+  // Preprod's indexer and RPC are Blockfrost's and need a project token (a free
+  // account is enough). Without one the CLI cannot read or write that network;
+  // the page verifies keylessly through datum-api's read-only relay.
+  if (net.blockfrost && !process.env.BLOCKFROST_PROJECT_ID) {
+    console.error(`config: ${net.id} needs BLOCKFROST_PROJECT_ID (free Midnight ${net.label} project at blockfrost.io)`);
+    process.exit(1);
+  }
+  return withBlockfrost(net, process.env.BLOCKFROST_PROJECT_ID);
 };

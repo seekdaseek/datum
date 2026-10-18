@@ -15,6 +15,7 @@
 import { ContractState } from '@midnight-ntwrk/compact-runtime';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { resolveNetwork } from './config.js';
+import { CONTRACT_ACTION_QUERY } from '../../scripts/relay-queries.mjs';
 import { verifyAttestation, tamperedCopy } from '../../scripts/verify-core.mjs';
 import { CHAINS, isPaddingSlot } from '../../scripts/provenance.mjs';
 import { buildMoonwellBook } from '../../scripts/books/moonwell.mjs';
@@ -63,9 +64,7 @@ const gql = async (net, query, variables) => {
   if (body.errors?.length) throw new Error(`indexer: ${body.errors[0].message}`);
   return body.data;
 };
-const ACTION = `query Datum($addr: HexEncoded!) {
-  contractAction(address: $addr) { __typename state transaction { hash block { height timestamp } } }
-}`;
+const ACTION = CONTRACT_ACTION_QUERY;
 const fromHexStr = (h) => Uint8Array.from((h.startsWith('0x') ? h.slice(2) : h).match(/../g).map((b) => parseInt(b, 16)));
 
 const readContract = async (net, lib, address) => {
