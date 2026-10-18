@@ -1,6 +1,13 @@
 // ops/ecosystem.dedicated.config.cjs — the datum processes on a DEDICATED
-// 2 GB box (Hetzner CPX12: 1 vCPU, 1.9 GB RAM, 2 GB swapfile), nothing else
-// of value on it. Same shape as ops/ecosystem.config.cjs, sized for this host.
+// server, nothing else of value on it. Same shape as ops/ecosystem.config.cjs,
+// sized for this host. It started on a Hetzner CPX12 (1 vCPU, 1.9 GB RAM,
+// 2 GB swapfile) and moved to a CPX32 (4 vCPU, 8 GB RAM) on 2026-10-18, because
+// the sponsor wallet's first sync from genesis is CPU-bound (the dust stream
+// replays about 1.7 million events). The limits below are the CPX32 ones.
+//
+//   datum-api   CPUQuota=400% (all four cores for the wallet sync), MemoryMax=3G,
+//               MemorySwapMax=512M
+//   datum-prover unchanged: MemoryMax=768M, no swap, one core
 //
 // What differs from the shared 4 GB VPS, and why:
 //   PROVER_FLOOR_MB=250  the memory kept free for sshd, pm2, cloudflared and
@@ -18,11 +25,11 @@
 // after 5 idle minutes), loopback-only cgroup for the prover, nice 10, choom
 // 1000 (if the host runs dry the kernel kills datum, not sshd or pm2).
 //
-const SCOPE = (mem, swap) => [
+const SCOPE = (mem, swap, cpu = '100%') => [
   '--scope', '--quiet', '--collect',
   '-p', `MemoryMax=${mem}`,
   '-p', `MemorySwapMax=${swap}`,
-  '-p', 'CPUQuota=100%',
+  '-p', `CPUQuota=${cpu}`,
 ];
 const HARDEN = ['/usr/bin/nice', '-n', '10', '/usr/bin/choom', '-n', '1000', '--'];
 const PROOF_SERVER = '/nix/store/6naj0x3l5n0b4cx722xwasyp597p6z3h-ledger-8.1.0/bin/midnight-proof-server';
@@ -49,7 +56,7 @@ module.exports = {
       name: 'datum-api',
       script: '/usr/bin/systemd-run',
       interpreter: 'none',
-      args: [...SCOPE('1G', '512M'), '--', ...HARDEN, '/usr/bin/node', '/opt/datum/service/server.mjs'],
+      args: [...SCOPE('3G', '512M', '400%'), '--', ...HARDEN, '/usr/bin/node', '/opt/datum/service/server.mjs'],
       cwd: '/opt/datum',
       env: {
         SERVICE_ENV: '/opt/datum/service/.env.service,/opt/datum/service/.env.blockfrost',
@@ -59,6 +66,8 @@ module.exports = {
         PROVER_PM2: 'datum-prover',
         PROVER_IDLE_MIN: '5',
         PROVER_FLOOR_MB: '250',
+        // per-socket log of the sponsor sync: cursor against the indexer tip
+        WS_PROBE: '1',
       },
       autorestart: true,
       max_restarts: 10,

@@ -26,10 +26,10 @@ export const installWsProbe = ({ log = console.log, onProgress = () => {}, redac
         const d = typeof ev.data === 'string' ? ev.data : '';
         s.msgs++; s.bytes += d.length;
         if (!d.startsWith('{"id"') && !d.startsWith('{"type":"next"')) return;
-        const id = /^\{"id":"(\w+)"/.exec(d)?.[1];
+        const id = /^\{"id":"([^"]+)"/.exec(d)?.[1];
         const sub = s.subs[id] ?? (s.subs[id] = { name: '?', from: null, first: null, last: null, tip: null, count: 0 });
         // event cursor: zswap/dust ledger events carry id and maxId; shielded progress carries end indexes
-        const m = /"(?:zswapLedgerEvents|dustLedgerEvents)":\{"id":(\d+)/.exec(d);
+        const m = /"(?:zswapLedgerEvents|dustLedgerEvents)":\{(?:"type":"\w+",)?"id":(\d+)/.exec(d);
         if (m) {
           const ev = Number(m[1]);
           if (sub.first === null) sub.first = ev;
