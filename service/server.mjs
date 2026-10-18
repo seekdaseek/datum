@@ -50,6 +50,7 @@ import { NETWORKS, withBlockfrost } from '../scripts/networks.mjs';
 import { CONTRACT_ACTION_QUERY, normalizeQuery } from '../scripts/relay-queries.mjs';
 import { makeRedactor, guardStream } from './redact.mjs';
 import tls from 'node:tls';
+import { installWsProbe } from './wsprobe.mjs';
 import { buildVenueSlot } from '../scripts/provenance.mjs';
 import { buildMoonwellBook, MOONWELL, MARKETS } from '../scripts/books/moonwell.mjs';
 import { openWallet, saveCheckpoint, waitSynced, nightBalance, dustBalance, walletProviderFor } from '../scripts/wallet-lib.mjs';
@@ -196,6 +197,16 @@ const status = {
   lastAttestation: null,
   privacy: 'This hosted demo prover sees the demo book you submit. A real lender runs the prover locally and the book never leaves their machine.',
 };
+
+// Sync visibility: the cursor and the tip the indexer reports on each subscription,
+// so /api/status shows real progress. WS_PROBE=1 also logs every socket session.
+const syncEvents = {};
+installWsProbe({
+  log: process.env.WS_PROBE === '1' ? (...a) => console.log(redact(a.join(' '))) : () => {},
+  redact,
+  onProgress: (name, last, tip) => { syncEvents[name] = { at: last, tip, seen: new Date().toISOString() }; },
+});
+if (process.env.WS_PROBE === '1') setInterval(() => console.log(`[sync] ${JSON.stringify(syncEvents)}`), 30_000).unref();
 let ctx;
 let demo;
 let providers;
@@ -542,7 +553,7 @@ const server = createServer(async (req, res) => {
   }
   try {
     if (req.method === 'GET' && url.pathname === '/api/status') {
-      return send(req, res, 200, { ...status, queue: queue.length, busy, limits: { perIpPerHour: RATE_PER_HOUR, queueMax: QUEUE_MAX }, ...(NET.blockfrost ? { blockfrost: { requestsCounted: { http: bf.fetches, connections: bf.connections, since: bf.since }, relay: relayStats } } : {}) });
+      return send(req, res, 200, { ...status, queue: queue.length, busy, limits: { perIpPerHour: RATE_PER_HOUR, queueMax: QUEUE_MAX }, ...(Object.keys(syncEvents).length && status.state === 'syncing' ? { syncEvents } : {}), ...(NET.blockfrost ? { blockfrost: { requestsCounted: { http: bf.fetches, connections: bf.connections, since: bf.since }, relay: relayStats } } : {}) });
     }
     if (req.method === 'POST' && url.pathname === '/api/indexer') return await relay(req, res);
     if (req.method === 'GET' && url.pathname === '/api/books') {

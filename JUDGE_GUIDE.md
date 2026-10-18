@@ -22,9 +22,9 @@ On the same card:
 In **Attest a book yourself**:
 
 - Read the **privacy boundary**: the hosted demo prover sees the sample book; a real lender proves locally.
-- The pill shows the sponsor's state. It should read **Sponsor ready**.
+- The pill shows the sponsor's state. It should read **Sponsor ready**. If it reads that the sponsor wallet is syncing with Midnight, it is catching up with the chain after Preprod's indexer moved to Blockfrost on 9 October; sections 1, 2, 4 and 5 do not depend on it.
 - Keep **Overlevered AERO book** selected (the preview shows the balance-threshold check passing and datum failing) and press **Attest this book on Midnight**.
-- Watch the steps: reading fresh reserves from Base, preparing the private book, proving in zero knowledge, the sponsor adding DUST, submitting, the block. Expect about ⟨E2E_TIME⟩.
+- Watch the steps: reading fresh reserves from Base, preparing the private book, proving in zero knowledge, the sponsor adding DUST, submitting, the block. Each step shows its own seconds as it runs.
 - The result shows the transaction hash, block and verdict (**NOT COVERED** for this book), then the page verifies it from chain by itself: expect **VERIFIED**.
 
 Limits: one job in flight and three per hour per visitor, one proof at a time overall. If the pill says the sponsor is busy, your job queues and shows its position.
@@ -35,11 +35,11 @@ The relay answers the one contract read the page sends, so a terminal can ask th
 
 ```bash
 curl -s -X POST https://datum-api.ochinimus.app/api/indexer -H 'Content-Type: application/json' \
-  -d '{"query":"query Datum($addr: HexEncoded!) {\n  contractAction(address: $addr) { __typename state transaction { hash block { height timestamp } } }\n}","variables":{"addr":"⟨AERO_ADDR⟩"}}' \
+  -d '{"query":"query Datum($addr: HexEncoded!) {\n  contractAction(address: $addr) { __typename state transaction { hash block { height timestamp } } }\n}","variables":{"addr":"60c0dc62d6989724d602202a5d5b18e8c7af64ae48f9506588398d64bf4184f1"}}' \
   | node -e 'const a=JSON.parse(require("fs").readFileSync(0)).data.contractAction;console.log(a.__typename,a.transaction.hash,a.transaction.block.height)'
 ```
 
-Expect `ContractCall ⟨AERO_TX⟩ ⟨AERO_BLOCK⟩`: the AERO book's attestation, in block ⟨AERO_BLOCK⟩. For the WELL book use `⟨WELL_ADDR⟩`; expect `⟨WELL_TX⟩` in block ⟨WELL_BLOCK⟩. Any other query is refused with HTTP 400, by design.
+Expect `ContractCall bbf66ac0ff8ff6a408d039c4406bc0a6d26117895b2c1a5273ae658055b297ec 2890434`: the AERO book's attestation, in block 2,890,434. For the WELL book use `d2bd781efab363c369be91bc9f8214e6907a2607823fae363b36594e8c901ac8`; expect `18c8bd723287f72a9a2b6558a4dec3954306c8ddeb4834c20320a85f5951aecd` in block 2,890,448. Any other query is refused with HTTP 400, by design.
 
 ## 5. From the repository (optional, about 5 minutes)
 

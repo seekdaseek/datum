@@ -3,8 +3,8 @@
 **Proof of reserves shows the tokens exist, not that they can be sold for what the book says.** datum proves, in zero knowledge on [Midnight](https://midnight.network), that a lending book covers its debt at **realisable exit prices** (what its collateral would fetch if sold into the constant-product pool where it actually trades), not at the oracle mark a balance-threshold `proveSolvency` check uses. The pool's depth is public and re-fetchable from its own chain; the book stays private.
 
 > **Live on Midnight Preprod** (public test network, not mainnet). Two real books attested in one run:
-> Moonwell's WELL collateral, contract `⟨WELL_ADDR⟩`, transaction `⟨WELL_TX⟩`, block ⟨WELL_BLOCK⟩;
-> Moonwell's AERO collateral, contract `⟨AERO_ADDR⟩`, transaction `⟨AERO_TX⟩`, block ⟨AERO_BLOCK⟩.
+> Moonwell's WELL collateral, contract `d2bd781efab363c369be91bc9f8214e6907a2607823fae363b36594e8c901ac8`, transaction `18c8bd723287f72a9a2b6558a4dec3954306c8ddeb4834c20320a85f5951aecd`, block 2,890,448;
+> Moonwell's AERO collateral, contract `60c0dc62d6989724d602202a5d5b18e8c7af64ae48f9506588398d64bf4184f1`, transaction `bbf66ac0ff8ff6a408d039c4406bc0a6d26117895b2c1a5273ae658055b297ec`, block 2,890,434.
 > Page: <https://datum.ochinimus.app> · hosted attest service: <https://datum-api.ochinimus.app/api/status> · judge guide: [JUDGE_GUIDE.md](JUDGE_GUIDE.md) (every claim, five minutes).
 
 ## Judge steps
@@ -13,7 +13,7 @@
 
 1. Read the two real books. Press **Recompute from Base** on each: the page re-reads Moonwell and the Aerodrome pool at the stated Base block and shows **MATCHES BASE**.
 2. On the same cards press **Verify from chain**: expect **VERIFIED**. Then **Tamper with a copy**: one reserve changed by one millionth of a dollar, expect **MISMATCH** on exactly two checks. Nothing on chain changes.
-3. In **Attest a book yourself** wait for the sponsor pill to read **Sponsor ready**, keep **Overlevered AERO book** selected and press **Attest this book on Midnight**. Watch each step to the transaction, block and verdict (**NOT COVERED**); the page then verifies the result from chain by itself.
+3. In **Attest a book yourself** wait for the sponsor pill to read **Sponsor ready**, keep **Overlevered AERO book** selected and press **Attest this book on Midnight**. Watch each step to the transaction, block and verdict (**NOT COVERED**); the page then verifies the result from chain by itself. If the pill still reads that the sponsor wallet is syncing with Midnight, the sponsor is catching up with the chain after Midnight moved Preprod's indexer to Blockfrost on 9 October; attest opens when it is done, and steps 1 and 2 do not depend on it.
 
 **From a terminal (optional):**
 
@@ -35,12 +35,12 @@ Everything supplied to two [Moonwell](https://moonwell.fi) markets on Base, each
 
 | Moonwell market | Supplied | Coverage of the borrowing cap at the oracle mark | At realisable exit | Does not exist at exit | Attested at required ratio | Verdict |
 |---|---|---|---|---|---|---|
-| **WELL** (exit: WELL/WETH, 1% fee) | ⟨WELL_SUPPLIED⟩ WELL | **⟨WELL_MARK_X⟩** (⟨WELL_MARKED_USD⟩) | **⟨WELL_REAL_X⟩** (⟨WELL_REAL_USD⟩) | **⟨WELL_GAP_USD⟩**, ⟨WELL_GAP_PCT⟩ | ⟨WELL_RATIO⟩ | ⟨WELL_VERDICT⟩ |
-| **AERO** (exit: AERO/USDC, 0.30% fee) | ⟨AERO_SUPPLIED⟩ AERO | **⟨AERO_MARK_X⟩** (⟨AERO_MARKED_USD⟩) | **⟨AERO_REAL_X⟩** (⟨AERO_REAL_USD⟩) | **⟨AERO_GAP_USD⟩**, ⟨AERO_GAP_PCT⟩ | ⟨AERO_RATIO⟩ | ⟨AERO_VERDICT⟩ |
+| **WELL** (exit: WELL/WETH, 1% fee) | 131,253,121 WELL | **1.82x** ($315,634) | **1.21x** ($210,570) | **$105,064**, 33.3% | 1.00x | COVERED |
+| **AERO** (exit: AERO/USDC, 0.30% fee) | 3,404,767 AERO | **1.67x** ($2,647,788) | **1.48x** ($2,349,653) | **$298,134**, 11.3% | 1.00x | COVERED |
 
-Coverage is value divided by that borrowing cap: ⟨WELL_DEBT_USD⟩ for WELL (⟨WELL_CF⟩ collateral factor, oracle $⟨WELL_ORACLE⟩) and ⟨AERO_DEBT_USD⟩ for AERO (⟨AERO_CF⟩, oracle $⟨AERO_ORACLE⟩), read at Base blocks ⟨WELL_BASE_BLOCK⟩ and ⟨AERO_BASE_BLOCK⟩. Each attestation used a required ratio of 1.00x, the cap itself, and produced WELL ⟨WELL_VERDICT⟩ and AERO ⟨AERO_VERDICT⟩. The number to read is the gap: ⟨WELL_GAP_PCT⟩ of WELL's marked value is not there at exit.
+Coverage is value divided by that borrowing cap: $173,598 for WELL (55% collateral factor, oracle $0.00240477) and $1,588,673 for AERO (60%, oracle $0.777671), read at Base blocks 52,335,556 and 52,335,516. Each attestation used a required ratio of 1.00x, the cap itself, and produced WELL COVERED and AERO COVERED. The number to read is the gap: 33.3% of WELL's marked value is not there at exit.
 
-**WELL's pool is quoted in WETH**, so its slot carries a public `quoteRate`: Moonwell's own WETH price at the reference block ($⟨WELL_WETH⟩), which the verifier re-reads from Base. That values the WETH leg at the mark. Measured against the only x·y=k WETH/USDC pool on Base, selling the ⟨WELL_WETH_SOLD⟩ WETH there would fetch ⟨WELL_LEG_USD⟩, ⟨WELL_LEG_PCT⟩ less; WETH's deeper concentrated-liquidity pools are not measured.
+**WELL's pool is quoted in WETH**, so its slot carries a public `quoteRate`: Moonwell's own WETH price at the reference block ($2,540.56), which the verifier re-reads from Base. That values the WETH leg at the mark. Measured against the only x·y=k WETH/USDC pool on Base, selling the 82.88 WETH there would fetch $199,845, 5.1% less; WETH's deeper concentrated-liquidity pools are not measured.
 
 Every input is public on Base, so anyone can recompute either book (`node scripts/books/moonwell.mjs WELL`, or **Recompute from Base** on the page). The books are public by construction so judges can check them; a lender's own book would stay private and only its commitment and verdict would be published.
 
@@ -58,7 +58,7 @@ A flip from COVERED to NOT COVERED is shown on the AERO pool by the overlevered 
 | Fee | Ignored | Exact constant-product-with-fee bound per slot (Uint<160> cross-multiplication) |
 | Who may attest | Anyone | A registered attestor key (hash of a secret, checked in-circuit) |
 | History | Last verdict only | Every period chained to the previous commitment; period N must open period N−1 privately in-circuit |
-| Slots | 8 (k=15) | 4 (k=15, 32,606 rows). The 8-slot v2 circuit was k=16 and peaked at 940 MB in the prover; 4 slots peak at 482 MB, which is what lets a prover run on a shared 4 GB host |
+| Slots | 8 (k=15) | 4 (k=15, 32,606 rows). The 8-slot v2 circuit was k=16 and peaked at 940 MB in the prover; 4 slots peak at 482 MB (493 MB measured on the 2 GB host), which is what lets a prover run on a 2 GB host |
 | User action | Read-only page | **Attest a book** from the page: hosted prover, sponsor wallet pays DUST, then the page verifies the result from chain |
 | Control | None | A faithful mark-based check, in Compact, run on the same private book |
 | Tests | 22 | 86 (simulator, provenance replay, verifier, control, capacity gate, redaction), 6 of 6 real-ZK `/check` scenarios, 14 of 14 mutants killed |
@@ -137,7 +137,7 @@ A judge picks a sample book (or edits one), presses **Attest this book on Midnig
 
 **Privacy boundary, stated plainly:** the hosted demo prover sees the demo book you submit. That is acceptable only because every demo book is sample data chosen on a public page. A real lender runs the same prover locally (`scripts/deploy.mjs`) and the book never leaves their machine; only the commitment and the verdict reach the chain.
 
-**How it is hosted** ([`service/server.mjs`](service/server.mjs), [`ops/ecosystem.config.cjs`](ops/ecosystem.config.cjs)): its own PM2 processes and its own Cloudflare tunnel on a shared VPS. Each process runs under `systemd-run --scope` with a hard memory limit, no swap, one core, nice 10 and `oom_score_adj` 1000, so live services on the host always win. The proof server's cgroup admits only loopback traffic. One proof at a time in a queue; one job in flight and three per hour per visitor; the sponsor's state (syncing, ready, proving, DUST regenerating) is shown on the page, never a bare spinner. The sponsor wallet was synced once on a Mac and its state shipped as a checkpoint, so the host never pays the two-hour sync. Measured on the host: ⟨VPS_PROOF⟩ per proof, prover peak ⟨VPS_PEAK⟩.
+**How it is hosted** ([`service/server.mjs`](service/server.mjs), [`ops/ecosystem.dedicated.config.cjs`](ops/ecosystem.dedicated.config.cjs)): its own PM2 processes and its own Cloudflare tunnel on a dedicated 2 GB server (1 vCPU). Each process runs under `systemd-run --scope` with a hard memory limit, one core, nice 10 and `oom_score_adj` 1000. The prover's cgroup has no swap and admits only loopback traffic; the API may use up to 512 MB of swap. The prover is started per job and stopped after five idle minutes, and only when 700 MB is available ([`service/capacity.mjs`](service/capacity.mjs): the 454 MB prover peak plus a 250 MB floor kept for the host, set with `PROVER_FLOOR_MB`; the default floor of 500 MB is for a shared host). One proof at a time in a queue; one job in flight and three per hour per visitor; the sponsor's state (syncing, ready, proving, DUST regenerating) is shown on the page, never a bare spinner. The sponsor wallet's first sync from genesis is long on one vCPU, so [`scripts/sync-sponsor.mjs`](scripts/sync-sponsor.mjs) syncs it on a faster machine against the same indexer and the service restores that checkpoint. Measured on the host: two real 4-slot attest proofs through the prover took 13.3 s and 10.8 s, and the prover's cgroup peaked at 493 MB (limit 768 MB). The time from pressing attest to a verified result is recorded in the next update.
 
 ## Midnight primitives used
 
@@ -193,7 +193,13 @@ Proving keys (4 slots, k=15, 32,606 rows by `zkir mock-compile`):
 
 ## Deployment record (Preprod)
 
-⟨DEPLOY_TABLE⟩
+| Step | Contract | Transaction hash | Block |
+|---|---|---|---|
+| AERO book: deploy | `60c0dc62d6989724d602202a5d5b18e8c7af64ae48f9506588398d64bf4184f1` | `33aa5ad296aee02cb8fc42674377c4b714b1b895f435ec69293a8babd6d3d3f8` | 2,890,426 |
+| AERO book: attest, period 0, COVERED | | `bbf66ac0ff8ff6a408d039c4406bc0a6d26117895b2c1a5273ae658055b297ec` | 2,890,434 |
+| WELL book: deploy | `d2bd781efab363c369be91bc9f8214e6907a2607823fae363b36594e8c901ac8` | `648d09185b9f91ea6f6b5fab49a435c40aebfbd3ac4db0deb9a24fc37c83adf7` | 2,890,439 |
+| WELL book: attest, period 0, COVERED | | `18c8bd723287f72a9a2b6558a4dec3954306c8ddeb4834c20320a85f5951aecd` | 2,890,448 |
+| Demo contract (hosted attest flow): deploy | `763d37058edb5a23442145318d3ba041f1bbd0286942a624240d80696be7910c` | `6704c11cf431d4672988d5645227b4752a0320d99510c5ec393c91f115248608` | 2,890,453 |
 
 Every hash above is the transaction **hash** (canonical; Midnight.js's `txId` is one of several identifiers, see [docs/WAVE1.md](docs/WAVE1.md#transaction-hash-vs-transaction-identifier)). Full record: [deployments/preprod.json](deployments/preprod.json).
 
